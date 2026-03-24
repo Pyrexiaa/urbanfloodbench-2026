@@ -1,0 +1,39 @@
+# UrbanFloodNet Conda environment file (Apple Silicon / M1 compatible)
+# Install with: conda env create -f environment.yml
+# Then: conda activate urbanfloodnet && pip install torch-geometric
+
+name: urbanfloodnet
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  # Python
+  - python=3.10
+  
+  # Core numerical
+  - numpy>=1.24.0,<2.0
+  - pandas>=1.5.0
+  - scipy>=1.10.0
+  
+  # PyTorch (Apple Silicon with MPS support)
+  - pytorch::pytorch
+  - pytorch::torchvision
+  - pytorch::torchaudio
+  
+  # Machine Learning
+  - scikit-learn>=1.3.0
+  - lightgbm>=4.0.0
+  
+  # Visualization
+  - matplotlib>=3.7.0
+  - seaborn>=0.12.0
+  
+  # Utilities
+  - tqdm>=4.65.0
+  - pyyaml>=6.0
+  - jupyter>=1.0.0
+  - ipython>=8.0.0
+
+  # Development
+  - pytest>=7.0.0
+  - pip

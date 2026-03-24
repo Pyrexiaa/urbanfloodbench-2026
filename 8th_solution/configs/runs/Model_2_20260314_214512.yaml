@@ -1,0 +1,154 @@
+# ════════════════════════════════════════════════════════════════════
+# Reproducibility Config: Model_2_20260314_214512 (wandb: 7cqsqpzw)
+# ════════════════════════════════════════════════════════════════════
+#
+# Final checkpoint: checkpoints/Model_2_20260314_214512/Model_2_best.pt
+# Epoch 66 | loss 0.000711 | global_step 28408
+# Best Kaggle (h=256): 0.0538 at epoch 64
+#
+# Architecture: 694,606 params
+#   h_dim:       {oneD: 192, twoD: 96, global: 32}
+#   hidden_dim:  {oneDedge: 64, oneDedgeRev: 64, twoDedge: 128,
+#                 twoDedgeRev: 128, twoDoneD: 32, oneDtwoD: 32}
+#   msg_dim:     64
+#   num_1d_extra_hops: 4
+#   node_dyn_input_dims: {oneD: 10, twoD: 9, global: 1}
+#
+# Features: NLCD land-cover one-hot (16 classes) + impervious fraction
+#           + tree canopy cover; 14 1D static, 28 2D static
+#
+# Hardware: NVIDIA L40S (48 GB), 8 CPUs, 64 GB RAM
+# Environment: conda floodlm, Python 3.10.19, CUDA 12.8
+#
+# Note: noise_smart_* fields appear in the checkpoint config but noise
+#       injection was NOT used in this training lineage.
+# ════════════════════════════════════════════════════════════════════
+
+shared:
+  model: Model_2
+  batch_size: 24
+  clip_norm: 1.0
+  mixed_precision: true
+  checkpoint_interval: 1
+  early_stopping_patience: 5
+  curriculum_val_horizon: 32
+  history_len: 10
+
+# ── Multi-stage curriculum ──────────────────────────────────────────
+# Each stage is one sbatch invocation of submit_custom_curriculum_m2.sh.
+# Stages must be run sequentially; each resumes from the previous output.
+
+stages:
+
+  # ── Stage A: from scratch, h=1..128 ──────────────────────────────
+  # slurm 298421 | Mar 13 08:00-19:01
+  - name: "A – base curriculum h=1..128"
+    slurm_job: 298421
+    checkpoint_dir: Model_2_20260313_075947
+    resume: scratch
+    lr: 1e-3
+    forecast_len: 128
+    curriculum: "1:6,2:6,4:4,8:4,16:4,24:4,32:4,46:4,64:4,128:4"
+    epochs: 44                     # ep 1-44
+    output_checkpoint: Model_2_best.pt   # ep 44
+    best_kaggle: 0.0415            # at h=128
+    global_step_end: 23186
+    command: >
+      sbatch run/slurm/submit_custom_curriculum_m2.sh
+        scratch
+        "1:6,2:6,4:4,8:4,16:4,24:4,32:4,46:4,64:4,128:4"
+
+  # ── Stage B: extend to h=192 ─────────────────────────────────────
+  # slurm 299643 | Mar 13 20:15, interrupted at ep 51
+  - name: "B – extend h=128..192"
+    slurm_job: 299643
+    checkpoint_dir: Model_2_20260313_201543
+    resume: checkpoints/Model_2_20260313_075947/Model_2_best.pt
+    lr: 1e-3
+    forecast_len: 192
+    curriculum: "128:2,192:6"
+    epochs: 6                      # ep 45-50 (ep 51 hit wall time)
+    output_checkpoint: Model_2_best.pt   # ep 50
+    best_kaggle: 0.0390            # at h=128
+    global_step_end: ~24652
+    command: >
+      sbatch run/slurm/submit_custom_curriculum_m2.sh
+        checkpoints/Model_2_20260313_075947/Model_2_best.pt
+        "128:2,192:6"
+
+  # ── Stage C: resume h=128..192 ───────────────────────────────────
+  # slurm 299734 | Mar 14 01:38-07:22
+  - name: "C – resume h=128..192"
+    slurm_job: 299734
+    checkpoint_dir: Model_2_20260314_013829
+    resume: checkpoints/Model_2_20260313_201543/Model_2_best.pt
+    lr: 1e-3
+    forecast_len: 192
+    curriculum: "128:2,192:6"
+    epochs: 8                      # ep 51-58
+    output_checkpoint: Model_2_epoch_052.pt  # ← BRANCH: use ep 52, not best
+    best_kaggle: 0.0562            # at h=192
+    global_step_end: 26532
+    note: >
+      Branch point — the final lineage continues from epoch 52 (not the
+      best at epoch 58). Run D (slurm 299818, ep 59-62 at lr=1e-3) is a
+      dead-end branch from this run's best.pt.
+    command: >
+      sbatch run/slurm/submit_custom_curriculum_m2.sh
+        checkpoints/Model_2_20260313_201543/Model_2_best.pt
+        "128:2,192:6"
+
+  # ── Stage E: low-LR from ep 52, h=128..192 ──────────────────────
+  # slurm 300222 | Mar 14 15:23-21:45
+  - name: "E – low-LR branch from ep 52"
+    slurm_job: 300222
+    checkpoint_dir: Model_2_20260314_152314
+    resume: checkpoints/Model_2_20260314_013829/Model_2_epoch_052.pt
+    lr: 3e-5
+    forecast_len: 192
+    curriculum: "128:4,192:6"
+    keep_short_events: true
+    epochs: 10                     # ep 53-62
+    output_checkpoint: Model_2_epoch_062.pt
+    best_kaggle: 0.0597            # at h=192
+    global_step_end: 27808
+    command: >
+      sbatch run/slurm/submit_custom_curriculum_m2.sh
+        checkpoints/Model_2_20260314_013829/Model_2_epoch_052.pt
+        "128:4,192:6"
+        3e-5 keep-short
+
+  # ── Stage F: final — extend to h=256 ────────────────────────────
+  # slurm 301089 | Mar 14 21:45 - Mar 15 00:12
+  # wandb run: 7cqsqpzw
+  # sbatch dependency: --dependency=afterok:300222
+  - name: "F – final h=256"
+    slurm_job: 301089
+    wandb_run_id: 7cqsqpzw
+    checkpoint_dir: Model_2_20260314_214512
+    resume: checkpoints/Model_2_20260314_152314/Model_2_epoch_062.pt
+    lr: 3e-4
+    forecast_len: 256
+    curriculum: "256:4"
+    keep_short_events: true
+    epochs: 4                      # ep 63-66
+    output_checkpoint: Model_2_best.pt   # ep 66, loss=0.000711
+    kaggle_public: 0.0227           # best public leaderboard score
+    global_step_end: 28408
+    command: >
+      sbatch --dependency=afterok:300222
+        run/slurm/submit_custom_curriculum_m2.sh
+        checkpoints/Model_2_20260314_152314/Model_2_epoch_062.pt
+        "256:4"
+        3e-4 keep-short
+
+# ── Dead-end branches (not in final lineage) ──────────────────────
+dead_ends:
+  - name: "D – continued from C best at lr=1e-3"
+    slurm_job: 299818
+    checkpoint_dir: Model_2_20260314_082052
+    resume: checkpoints/Model_2_20260314_013829/Model_2_best.pt
+    lr: 1e-3
+    curriculum: "192:4"
+    epochs: 4                      # ep 59-62
+    note: Branched from Stage C best.pt (ep 58), not ep 52. Not an ancestor.

@@ -1,0 +1,37 @@
+# UrbanFloodNet Data Configuration
+# =================================
+# Edit this file to change which model data is loaded.
+# SELECTED_MODEL can also be overridden via environment variable:
+#   export SELECTED_MODEL=Model_2
+
+# Model selection: "Model_1" or "Model_2"
+selected_model: "Model_1"
+
+# Data folder path (relative to project root)
+data_folder: "data"
+
+# Data subset size for testing (use all if <= 0)
+# Examples: -1 (all), 10 (first 10 events)
+max_events: -1
+
+# Training splits
+validation_split: 0.2   # 20% validation (randomly selected events)
+test_split: 0.0          # No held-out test set — maximise training data
+random_seed: 42
+
+# Expected data structure:
+#   data/
+#   └── {selected_model}/
+#       └── train/
+#           ├── 1d_nodes_static.csv
+#           ├── 2d_nodes_static.csv
+#           ├── 1d_edges_static.csv
+#           ├── 2d_edges_static.csv
+#           ├── 1d_edge_index.csv
+#           ├── 2d_edge_index.csv
+#           ├── 1d2d_connections.csv
+#           ├── event_0/
+#           │   ├── 1d_nodes_dynamic_all.csv
+#           │   └── 2d_nodes_dynamic_all.csv
+#           ├── event_1/
+#           └── ...

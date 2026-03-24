@@ -1,0 +1,135 @@
+================================================================================
+                         SUBMISSION ASSEMBLY RECIPE
+================================================================================
+
+Best submission:  hz.parquet   (Public LB = 0.0178)
+Alternative:      all.parquet  (Public LB = 0.0179)
+
+Metric: Standardized RMSE (lower is better)
+  (Model 1, NodeType 1):  std = 16.877747
+  (Model 1, NodeType 2):  std = 14.378797
+  (Model 2, NodeType 1):  std =  3.191784
+  (Model 2, NodeType 2):  std =  2.727131
+
+
+================================================================================
+  STEP 1: Boosting foundation — M1 NT1 + M1 NT2
+================================================================================
+
+  Notebook:  notebooks/boosting_m1_nt1_nt2.ipynb
+  Output:    submission_v7_seedblend.parquet
+  Details:   v7 seed-blended CatBoost + LightGBM (5 seeds x 2 models = 10,
+             averaged). Fixed 50/50 ensemble.
+             Produces M1 NT1 + M1 NT2 predictions (+ M2 NT2 placeholder rows
+             which are NOT used in the final submission).
+
+
+================================================================================
+  STEP 2: Boosting M2 NT1  (6 seeds)
+================================================================================
+
+  Notebooks: notebooks/boosting_m2_nt1_seed_{56,57,58,59,60,61}.ipynb
+  Output:    submission_m2_nt1_refit_cb_xgb_ensemble.parquet  (per seed)
+  Details:   CatBoost + BiGRU ensemble for Model 2, NodeType 1.
+             Run each seed separately. All 6 outputs are averaged at assembly.
+
+
+================================================================================
+  STEP 3: Boosting M2 NT2  (4 seeds)
+================================================================================
+
+  Notebooks: notebooks/boosting_m2_nt2_seed_{56,57,58,59}.ipynb
+  Output:    submission_m2_nt2_cb_lgb_xgb_ensemble.parquet  (per seed)
+  Details:   CatBoost + LightGBM + XGBoost ensemble for Model 2, NodeType 2.
+             Run each seed separately. All 4 outputs are averaged at assembly.
+
+
+================================================================================
+  STEP 4: DL main ensemble — M2 NT1
+================================================================================
+
+  Notebook:  notebooks/dl_m2_nt1_main_ensemble.ipynb
+  Output:    submission_m2_nt1_v2_dl_ensemble_top3.parquet
+             + individual: submission_m2_nt1_{N2,N5,N3}_*.parquet
+  Details:   V2 Top-3 DL models refitted with GroupKFold:
+               N2_transformer_scse  (Std RMSE = 0.3275)
+               N5_big_tf_w200       (Std RMSE = 0.3283)
+               N3_transformer_gcn   (Std RMSE = 0.3449)
+             Ensemble = mean of 3 models.
+
+
+================================================================================
+  STEP 5: DL single models — M2 NT1  (for blending)
+================================================================================
+
+  notebooks/dl_m2_nt1_n2_transformer_scse.ipynb
+    → submission_m2_nt1_N2_transformer_scse.parquet
+
+  notebooks/dl_m2_nt1_n3_transformer_gcn.ipynb
+    → submission_m2_nt1_N3_transformer_gcn.parquet
+
+  notebooks/dl_m2_nt1_n5_big_tf_w200.ipynb
+    → submission_m2_nt1_N5_big_tf_w200.parquet
+
+  notebooks/dl_m2_nt1_n9_scse_gcn.ipynb
+    → submission_m2_nt1_N9_scse_gcn.parquet
+
+  notebooks/dl_m2_nt1_e678_bigru_transformer.ipynb
+    → submission_m2_nt1_dl_ensemble_top3.parquet
+      (ensemble of E6_transformer + E7_bigru_attention + E8_bigru_gcn)
+
+
+================================================================================
+  STEP 6: Assemble final submissions
+================================================================================
+
+  hz.parquet  (BEST, Public LB = 0.0178)
+  ──────────────────────────────────────
+
+    Submodel       Source                            How
+    ─────────────  ────────────────────────────────  ────────────────────
+    (M1, NT1)      Step 1 (foundation)               as-is
+    (M1, NT2)      Step 1 (foundation)               as-is
+    (M2, NT2)      Step 3 (4 boosting seeds)         avg of 4 seeds
+    (M2, NT1)      Steps 2 + 4 + 5                   weighted blend:
+                     50%  boosting avg (6 seeds)
+                     25%  DL main ensemble
+                     25%  avg(N2_opt, N3_opt, N9_opt)
+
+    Script:  python scripts/make_submission_hz.py --output hz.parquet
+
+
+  all.parquet  (Public LB = 0.0179)
+  ──────────────────────────────────────
+
+    Same as hz.parquet except M2 NT1 is further blended:
+      90%  hz.parquet M2 NT1 values
+       5%  N5_optional (Step 5)
+       5%  GRU ensemble E6+E7+E8 (Step 5)
+
+    Script:  python scripts/make_submission_all.py --output all.parquet
+
+
+================================================================================
+  PROJECT STRUCTURE
+================================================================================
+
+  ./
+  ├── notebooks/
+  │   ├── boosting_m1_nt1_nt2.ipynb                 # Step 1: M1 NT1 + M1 NT2
+  │   ├── boosting_m2_nt1_seed_{56..61}.ipynb       # Step 2: M2 NT1 (6 seeds)
+  │   ├── boosting_m2_nt2_seed_{56..59}.ipynb       # Step 3: M2 NT2 (4 seeds)
+  │   ├── dl_m2_nt1_main_ensemble.ipynb             # Step 4: M2 NT1 DL ensemble
+  │   ├── dl_m2_nt1_n2_transformer_scse.ipynb       # Step 5: single DL models
+  │   ├── dl_m2_nt1_n3_transformer_gcn.ipynb
+  │   ├── dl_m2_nt1_n5_big_tf_w200.ipynb
+  │   ├── dl_m2_nt1_n9_scse_gcn.ipynb
+  │   └── dl_m2_nt1_e678_bigru_transformer.ipynb
+  ├── scripts/
+  │   ├── make_submission_hz.py                     # Assembles hz.parquet
+  │   ├── make_submission_all.py                    # Assembles all.parquet
+  │   └── merge_m2nt1.py                            # Legacy merge utility
+  └── docs/
+      ├── overview.txt                              # Competition description
+      ├── data.txt                                  # Dataset description
+      └── submit_recipe.txt                         # This file

@@ -1,0 +1,17 @@
+{
+  "id": "suioshion/lightgbm-auto-v2h",
+  "title": "LightGBM Auto v2h",
+  "code_file": "lgbm_auto_v2h.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": false,
+  "competition_sources": [
+    "urban-flood-modelling"
+  ],
+  "dataset_sources": [
+    "attiqueansari/urbanfloodbench"
+  ],
+  "kernel_sources": []
+}
