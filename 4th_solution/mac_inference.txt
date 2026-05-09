@@ -1,0 +1,68 @@
+=================================================================
+  HeteroFloodGNN  —  Inference Time Benchmark
+=================================================================
+  Device  : cpu
+  Warmup  : 10 runs
+  Timed   : 50 runs
+=================================================================
+
+  [Model 1]  n_1d=  17  n_2d= 3716  hidden=64  wl_prev=2
+            in_1d=36  in_2d=26
+
+  Parameters: 374,616
+
+  Output  →  1D shape: (17, 4)   2D shape: (3716, 4)
+
+  ┌─────────────────────────────────────────┐
+  │  Full forward pass (1D + 2D combined)   │
+  │  Mean  :   30.190 ms              │
+  │  Std   :    1.401 ms              │
+  │  Min   :   28.463 ms              │
+  │  Max   :   37.544 ms              │
+  │  p95   :   32.319 ms              │
+  └─────────────────────────────────────────┘
+
+  Estimated per-head inference time (proportional to node count):
+    1D nodes (  17 / 3733 = 0.5%)  →  ~0.1375 ms
+    2D nodes ( 3716 / 3733 = 99.5%)  →  ~30.0527 ms
+
+  [Model 2]  n_1d= 198  n_2d= 4299  hidden=96  wl_prev=10
+            in_1d=44  in_2d=34
+
+  Parameters: 807,584
+
+  Output  →  1D shape: (198, 4)   2D shape: (4299, 4)
+
+  ┌─────────────────────────────────────────┐
+  │  Full forward pass (1D + 2D combined)   │
+  │  Mean  :   54.301 ms              │
+  │  Std   :    8.597 ms              │
+  │  Min   :   44.996 ms              │
+  │  Max   :   76.383 ms              │
+  │  p95   :   69.256 ms              │
+  └─────────────────────────────────────────┘
+
+  Estimated per-head inference time (proportional to node count):
+    1D nodes ( 198 / 4497 = 4.4%)  →  ~2.3908 ms
+    2D nodes ( 4299 / 4497 = 95.6%)  →  ~51.9103 ms
+
+=================================================================
+  SUMMARY  —  Inference Times (mean ± std over 50 runs)
+=================================================================
+  Variant                          Mean (ms)   Std (ms)   p95 (ms)
+  -------------------------------------------------------------
+  Model 1  —  1D nodes                0.1375     0.0064     0.1472
+  Model 1  —  2D nodes               30.0527     1.3950    32.1713
+  Model 2  —  1D nodes                2.3908     0.3785     3.0493
+  Model 2  —  2D nodes               51.9103     8.2188    66.2069
+
+  Full forward pass (1D + 2D together):
+  Model 1  —  full pass               30.190      1.401     32.319
+  Model 2  —  full pass               54.301      8.597     69.256
+=================================================================
+
+  NOTE: 1D/2D per-head times are proportional estimates.
+        The GNN processes both node types in a single fused
+        forward pass; they cannot be isolated without
+        architectural changes.
+=================================================================

@@ -1,0 +1,36 @@
+================================================================================
+
+[Config]  warmup_runs=10  bench_runs=50  rollout_steps=90  seq_len=10
+
+--- Full rollout (warm-up + all decode steps) ---
+  Model 1 (TGCN)     full rollout  [90 steps]    mean=7120.24 ms  std=1185.51 ms  min=5454.20 ms  max=10794.72 ms
+  Model 2 (EdgeAware) full rollout [90 steps]    mean=11442.89 ms  std=3710.02 ms  min=8809.27 ms  max=21608.47 ms
+
+--- Single decode + step (per-timestep cost) ---
+  Model 1 (TGCN)      single step                mean= 164.73 ms  std= 92.18 ms  min=  65.87 ms  max= 413.00 ms
+  Model 2 (EdgeAware)  single step               mean= 228.54 ms  std=108.82 ms  min= 106.31 ms  max= 664.04 ms
+
+--- Decode head only (1-D vs 2-D node outputs) ---
+  Model 1 — decode head 1-D nodes                mean=   0.03 ms  std=  0.00 ms  min=   0.03 ms  max=   0.06 ms
+  Model 1 — decode head 2-D nodes                mean=   4.11 ms  std=  5.23 ms  min=   1.82 ms  max=  30.19 ms
+  Model 2 — decode head 1-D nodes                mean=   0.31 ms  std=  0.42 ms  min=   0.12 ms  max=   2.77 ms
+  Model 2 — decode head 2-D nodes                mean=   3.98 ms  std=  2.61 ms  min=   2.18 ms  max=  14.71 ms
+
+================================================================================
+SUMMARY
+================================================================================
+Metric                                                   Model 1 (TGCN)    Model 2 (EdgeAware)
+-----------------------------------------------------------------------------------------------
+  Full rollout  (ms)                                           7120.24              11442.89
+  Per-step cost (ms)                                            164.73                228.54
+  Rollout steps                                                     90                    90
+  Model1 1-D nodes                                                  17                    17
+  Model1 2-D nodes                                                3716                  3716
+  Model2 1-D nodes                                                 198                   198
+  Model2 2-D nodes                                                4299                  4299
+  Parameters                                                 3,025,155             4,358,883
+================================================================================
+
+Device: cpu  |  Model 1 Nodes: 3733  |  Model 1 Edges: 11199
+  Model 2 Nodes: 4497  |  Model 2 Edges: 13491
+All times are wall-clock with CUDA synchronisation (mean over 50 runs after 10 warm-up runs).
