@@ -149,7 +149,7 @@ def parse_args():
         "--n_runs",
         type=int,
         default=5,
-        help="Timing repetitions; best-of-N reported (default 5)",
+        help="Timing repetitions; best-of-N reported (default 50)",
     )
     p.add_argument(
         "--n_ensemble",
@@ -228,8 +228,8 @@ def get_device() -> torch.device:
     return dev
 
 
-def timer(fn, n_runs: int) -> Tuple[float, float]:
-    """Return (best_time_sec, mean_time_sec) across n_runs calls."""
+def timer(fn, n_runs: int) -> Tuple[float, float, float]:
+    """Return (best_time_sec, mean_time_sec, std_time_sec) across n_runs calls."""
     times = []
     for _ in range(n_runs):
         t0 = time.perf_counter()
@@ -237,7 +237,7 @@ def timer(fn, n_runs: int) -> Tuple[float, float]:
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         times.append(time.perf_counter() - t0)
-    return min(times), float(np.mean(times))
+    return min(times), float(np.mean(times)), float(np.std(times))
 
 
 def section(title: str):
@@ -1029,44 +1029,44 @@ def main():
     # -----------------------------------------------------------------------
     print(f"\n  Timing over {N_RUNS} runs, reporting best and mean …\n")
 
-    best_m1_1d, mean_m1_1d = timer(
+    best_m1_1d, mean_m1_1d, std_m1_1d = timer(
         lambda: infer_m1_1d(
             ev_m1_1d, m1_1d_anchors_list[0], m1_1d_ridge_list[0], m1_1d_lambdas[0], rng
         ),
         N_RUNS,
     )
     print(
-        f"  Model 1 – 1D  (Ridge+LightGBM Rain-3, {M1_N1:>4} nodes):  best={best_m1_1d * 1e3:8.1f} ms  mean={mean_m1_1d * 1e3:8.1f} ms"
+        f"  Model 1 – 1D  (Ridge+LightGBM Rain-3, {M1_N1:>4} nodes):  best={best_m1_1d * 1e3:8.1f} ms  mean={mean_m1_1d * 1e3:8.1f} ms  std={std_m1_1d * 1e3:8.1f} ms"
     )
 
-    best_m1_2d, mean_m1_2d = timer(
+    best_m1_2d, mean_m1_2d, std_m1_2d = timer(
         lambda: infer_m1_2d(
             ev_m1_2d, m1_2d_anchors_list[0], m1_2d_ridge_list[0], m1_2d_lambdas[0], rng
         ),
         N_RUNS,
     )
     print(
-        f"  Model 1 – 2D  (Ridge+LightGBM Rain-3, {M1_N2:>4} nodes):  best={best_m1_2d * 1e3:8.1f} ms  mean={mean_m1_2d * 1e3:8.1f} ms"
+        f"  Model 1 – 2D  (Ridge+LightGBM Rain-3, {M1_N2:>4} nodes):  best={best_m1_2d * 1e3:8.1f} ms  mean={mean_m1_2d * 1e3:8.1f} ms  std={std_m1_2d * 1e3:8.1f} ms"
     )
 
-    best_m2_1d, mean_m2_1d = timer(
+    best_m2_1d, mean_m2_1d, std_m2_1d = timer(
         lambda: infer_gnn_1d(
             ev_m2_1d, gnn_models[0], device, M2_N1, GNN_GRAPH_BATCH_SIZE, rng
         ),
         N_RUNS,
     )
     print(
-        f"  Model 2 – 1D  (Physics-Informed GNN,   {M2_N1:>4} nodes):  best={best_m2_1d * 1e3:8.1f} ms  mean={mean_m2_1d * 1e3:8.1f} ms"
+        f"  Model 2 – 1D  (Physics-Informed GNN,   {M2_N1:>4} nodes):  best={best_m2_1d * 1e3:8.1f} ms  mean={mean_m2_1d * 1e3:8.1f} ms  std={std_m2_1d * 1e3:8.1f} ms"
     )
 
-    best_m2_2d, mean_m2_2d = timer(
+    best_m2_2d, mean_m2_2d, std_m2_2d = timer(
         lambda: infer_m2_2d(
             ev_m2_2d, m2_2d_anchors_list[0], m2_2d_ridge_list[0], m2_2d_lambdas[0], rng
         ),
         N_RUNS,
     )
     print(
-        f"  Model 2 – 2D  (Ridge+LGBM+PI feats,   {M2_N2:>4} nodes):  best={best_m2_2d * 1e3:8.1f} ms  mean={mean_m2_2d * 1e3:8.1f} ms"
+        f"  Model 2 – 2D  (Ridge+LGBM+PI feats,   {M2_N2:>4} nodes):  best={best_m2_2d * 1e3:8.1f} ms  mean={mean_m2_2d * 1e3:8.1f} ms  std={std_m2_2d * 1e3:8.1f} ms"
     )
 
     # -----------------------------------------------------------------------
@@ -1074,44 +1074,44 @@ def main():
     # -----------------------------------------------------------------------
     print(f"  Each ensemble call runs all {N_ENS} members then blends.\n")
 
-    best_ens_m1_1d, mean_ens_m1_1d = timer(
+    best_ens_m1_1d, mean_ens_m1_1d, std_ens_m1_1d = timer(
         lambda: infer_ensemble_m1_1d(
             ev_m1_1d, m1_1d_anchors_list, m1_1d_ridge_list, m1_1d_lambdas, N_ENS, rng
         ),
         N_RUNS,
     )
     print(
-        f"  Ensemble M1-1D  ({M1_N1:>4} nodes, {N_ENS} members): best={best_ens_m1_1d * 1e3:8.1f} ms  mean={mean_ens_m1_1d * 1e3:8.1f} ms"
+        f"  Ensemble M1-1D  ({M1_N1:>4} nodes, {N_ENS} members): best={best_ens_m1_1d * 1e3:8.1f} ms  mean={mean_ens_m1_1d * 1e3:8.1f} ms  std={std_ens_m1_1d * 1e3:8.1f} ms"
     )
 
-    best_ens_m1_2d, mean_ens_m1_2d = timer(
+    best_ens_m1_2d, mean_ens_m1_2d, std_ens_m1_2d = timer(
         lambda: infer_ensemble_m1_2d(
             ev_m1_2d, m1_2d_anchors_list, m1_2d_ridge_list, m1_2d_lambdas, N_ENS, rng
         ),
         N_RUNS,
     )
     print(
-        f"  Ensemble M1-2D  ({M1_N2:>4} nodes, {N_ENS} members): best={best_ens_m1_2d * 1e3:8.1f} ms  mean={mean_ens_m1_2d * 1e3:8.1f} ms"
+        f"  Ensemble M1-2D  ({M1_N2:>4} nodes, {N_ENS} members): best={best_ens_m1_2d * 1e3:8.1f} ms  mean={mean_ens_m1_2d * 1e3:8.1f} ms  std={std_ens_m1_2d * 1e3:8.1f} ms"
     )
 
-    best_ens_m2_1d, mean_ens_m2_1d = timer(
+    best_ens_m2_1d, mean_ens_m2_1d, std_ens_m2_1d = timer(
         lambda: infer_ensemble_m2_1d(
             ev_m2_1d, gnn_models, N_ENS, device, M2_N1, GNN_GRAPH_BATCH_SIZE, rng
         ),
         N_RUNS,
     )
     print(
-        f"  Ensemble M2-1D  ({M2_N1:>4} nodes, {N_ENS} members): best={best_ens_m2_1d * 1e3:8.1f} ms  mean={mean_ens_m2_1d * 1e3:8.1f} ms"
+        f"  Ensemble M2-1D  ({M2_N1:>4} nodes, {N_ENS} members): best={best_ens_m2_1d * 1e3:8.1f} ms  mean={mean_ens_m2_1d * 1e3:8.1f} ms  std={std_ens_m2_1d * 1e3:8.1f} ms"
     )
 
-    best_ens_m2_2d, mean_ens_m2_2d = timer(
+    best_ens_m2_2d, mean_ens_m2_2d, std_ens_m2_2d = timer(
         lambda: infer_ensemble_m2_2d(
             ev_m2_2d, m2_2d_anchors_list, m2_2d_ridge_list, m2_2d_lambdas, N_ENS, rng
         ),
         N_RUNS,
     )
     print(
-        f"  Ensemble M2-2D  ({M2_N2:>4} nodes, {N_ENS} members): best={best_ens_m2_2d * 1e3:8.1f} ms  mean={mean_ens_m2_2d * 1e3:8.1f} ms"
+        f"  Ensemble M2-2D  ({M2_N2:>4} nodes, {N_ENS} members): best={best_ens_m2_2d * 1e3:8.1f} ms  mean={mean_ens_m2_2d * 1e3:8.1f} ms  std={std_ens_m2_2d * 1e3:8.1f} ms"
     )
 
     # -----------------------------------------------------------------------
@@ -1125,52 +1125,60 @@ def main():
     )
     print(f"  Device: {device}")
     print()
-    print(f"  {'Scenario':<55}  {'Best (ms)':>10}  {'Mean (ms)':>10}")
-    print(f"  {'-' * 55}  {'-' * 10}  {'-' * 10}")
+    print(f"  {'Scenario':<55}  {'Best (ms)':>10}  {'Mean (ms)':>10}  {'Std (ms)':>10}")
+    print(f"  {'-' * 55}  {'-' * 10}  {'-' * 10}  {'-' * 10}")
     rows = [
         (
             f"Model 1 – 1D  (Ridge+LGBM Rain-3,  {M1_N1:>4} nodes)",
             best_m1_1d,
             mean_m1_1d,
+            std_m1_1d,
         ),
         (
             f"Model 1 – 2D  (Ridge+LGBM Rain-3,  {M1_N2:>4} nodes)",
             best_m1_2d,
             mean_m1_2d,
+            std_m1_2d,
         ),
         (
             f"Model 2 – 1D  (Physics-Inf. GNN,   {M2_N1:>4} nodes)",
             best_m2_1d,
             mean_m2_1d,
+            std_m2_1d,
         ),
         (
             f"Model 2 – 2D  (Ridge+LGBM+PI,      {M2_N2:>4} nodes)",
             best_m2_2d,
             mean_m2_2d,
+            std_m2_2d,
         ),
         (
             f"Ensemble M1-1D  ({M1_N1:>4} nodes, {N_ENS} members)",
             best_ens_m1_1d,
             mean_ens_m1_1d,
+            std_ens_m1_1d,
         ),
         (
             f"Ensemble M1-2D  ({M1_N2:>4} nodes, {N_ENS} members)",
             best_ens_m1_2d,
             mean_ens_m1_2d,
+            std_ens_m1_2d,
         ),
         (
             f"Ensemble M2-1D  ({M2_N1:>4} nodes, {N_ENS} members)",
             best_ens_m2_1d,
             mean_ens_m2_1d,
+            std_ens_m2_1d,
         ),
         (
             f"Ensemble M2-2D  ({M2_N2:>4} nodes, {N_ENS} members)",
             best_ens_m2_2d,
             mean_ens_m2_2d,
+            std_ens_m2_2d,
         ),
     ]
-    for name, b, m in rows:
-        print(f"  {name:<55}  {b * 1e3:>10.1f}  {m * 1e3:>10.1f}")
+    for name, b, m, s in rows:
+        print(f"  {name:<55}  {b * 1e3:>10.1f}  {m * 1e3:>10.1f}  {s * 1e3:>10.1f}")
     print()
     print("  Times are wall-clock seconds × 1000 (milliseconds).")
     print("  'Best' = min across runs; 'Mean' = average across runs.")

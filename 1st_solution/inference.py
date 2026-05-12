@@ -56,7 +56,7 @@ INPUT_WINDOW = 10  # history steps fed as context
 FORECAST_STEPS = 1  # future steps to predict
 D_MODEL = 10
 N_WARMUP = 3  # JIT warm-up runs (not timed)
-N_TIMED = 10  # timed runs
+N_TIMED = 50  # timed runs
 
 # ---------------------------------------------------------------------------
 # 3.  Layer / model definitions  (identical to both notebooks)

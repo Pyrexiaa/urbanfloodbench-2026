@@ -504,7 +504,7 @@ def main():
         help="Warmup rollouts before timing (default: 2)",
     )
     parser.add_argument(
-        "--n_bench", type=int, default=5, help="Timed rollouts to average (default: 5)"
+        "--n_bench", type=int, default=50, help="Timed rollouts to average (default: 50)"
     )
     parser.add_argument(
         "--device", type=str, default="cuda", help="torch device (default: cuda)"
