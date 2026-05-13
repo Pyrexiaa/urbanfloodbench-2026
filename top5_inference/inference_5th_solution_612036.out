@@ -1,7 +1,8 @@
+
 ============================================================
   Environment
 ============================================================
-  GPU : not available – using CPU
+  GPU : NVIDIA A100 80GB PCIe MIG 3g.40gb  (42.1 GB)
   Events          : 20
   Timesteps       : 200
   Model 1 – 1D nodes : 17
@@ -35,7 +36,7 @@
   GNN layers       : 12  (attn)
   GNN d_model      : 128
   GNN node count   : 198  (Model 2 – 1D)
-  Built 3 GNN members → device=cpu
+  Built 3 GNN members → device=cuda
 
 ============================================================
   Warm-up pass (1 run, not timed)
@@ -48,38 +49,39 @@
 
   Timing over 5 runs, reporting best and mean …
 
-  Model 1 – 1D  (Ridge+LightGBM Rain-3,   17 nodes):  best= 12004.3 ms  mean= 12021.9 ms
-  Model 1 – 2D  (Ridge+LightGBM Rain-3, 3716 nodes):  best= 59585.5 ms  mean= 59637.2 ms
-  Model 2 – 1D  (Physics-Informed GNN,    198 nodes):  best= 13477.4 ms  mean= 13657.4 ms
-  Model 2 – 2D  (Ridge+LGBM+PI feats,   4299 nodes):  best= 68347.3 ms  mean= 70662.8 ms
+  Model 1 – 1D  (Ridge+LightGBM Rain-3,   17 nodes):  best= 30976.4 ms  mean= 31011.2 ms  std=    35.4 ms
+  Model 1 – 2D  (Ridge+LightGBM Rain-3, 3716 nodes):  best=128981.8 ms  mean=129011.9 ms  std=    20.6 ms
+  Model 2 – 1D  (Physics-Informed GNN,    198 nodes):  best=  1607.1 ms  mean=  1608.2 ms  std=     1.8 ms
+  Model 2 – 2D  (Ridge+LGBM+PI feats,   4299 nodes):  best=231077.0 ms  mean=231101.0 ms  std=    16.5 ms
 
 ============================================================
   Timing ensemble inference (3 members, nodewise blend)
 ============================================================
   Each ensemble call runs all 3 members then blends.
 
-  Ensemble M1-1D  (  17 nodes, 3 members): best= 36236.9 ms  mean= 36547.1 ms
-  Ensemble M1-2D  (3716 nodes, 3 members): best=180178.9 ms  mean=181425.5 ms
-  Ensemble M2-1D  ( 198 nodes, 3 members): best= 45957.9 ms  mean= 47149.2 ms
-  Ensemble M2-2D  (4299 nodes, 3 members): best=203264.3 ms  mean=204618.7 ms
+  Ensemble M1-1D  (  17 nodes, 3 members): best= 92886.8 ms  mean= 93035.0 ms  std=   106.5 ms
+  Ensemble M1-2D  (3716 nodes, 3 members): best=387724.1 ms  mean=388034.0 ms  std=   197.7 ms
+  Ensemble M2-1D  ( 198 nodes, 3 members): best=  4931.9 ms  mean=  4936.0 ms  std=     3.0 ms
+  Ensemble M2-2D  (4299 nodes, 3 members): best=701671.7 ms  mean=701774.9 ms  std=    66.3 ms
 
 ============================================================
   Summary
 ============================================================
 
   Events: 20 × 200 timesteps  |  M1: 17 1D nodes / 3716 2D nodes  |  M2: 198 1D nodes / 4299 2D nodes
-  Device: cpu
+  Device: cuda
 
-  Scenario                                                  Best (ms)   Mean (ms)
-  -------------------------------------------------------  ----------  ----------
-  Model 1 – 1D  (Ridge+LGBM Rain-3,    17 nodes)              12004.3     12021.9
-  Model 1 – 2D  (Ridge+LGBM Rain-3,  3716 nodes)              59585.5     59637.2
-  Model 2 – 1D  (Physics-Inf. GNN,    198 nodes)              13477.4     13657.4
-  Model 2 – 2D  (Ridge+LGBM+PI,      4299 nodes)              68347.3     70662.8
-  Ensemble M1-1D  (  17 nodes, 3 members)                     36236.9     36547.1
-  Ensemble M1-2D  (3716 nodes, 3 members)                    180178.9    181425.5
-  Ensemble M2-1D  ( 198 nodes, 3 members)                     45957.9     47149.2
-  Ensemble M2-2D  (4299 nodes, 3 members)                    203264.3    204618.7
+  Scenario                                                  Best (ms)   Mean (ms)    Std (ms)
+  -------------------------------------------------------  ----------  ----------  ----------
+  Model 1 – 1D  (Ridge+LGBM Rain-3,    17 nodes)              30976.4     31011.2        35.4
+  Model 1 – 2D  (Ridge+LGBM Rain-3,  3716 nodes)             128981.8    129011.9        20.6
+  Model 2 – 1D  (Physics-Inf. GNN,    198 nodes)               1607.1      1608.2         1.8
+  Model 2 – 2D  (Ridge+LGBM+PI,      4299 nodes)             231077.0    231101.0        16.5
+  Ensemble M1-1D  (  17 nodes, 3 members)                     92886.8     93035.0       106.5
+  Ensemble M1-2D  (3716 nodes, 3 members)                    387724.1    388034.0       197.7
+  Ensemble M2-1D  ( 198 nodes, 3 members)                      4931.9      4936.0         3.0
+  Ensemble M2-2D  (4299 nodes, 3 members)                    701671.7    701774.9        66.3
 
   Times are wall-clock seconds × 1000 (milliseconds).
   'Best' = min across runs; 'Mean' = average across runs.
+

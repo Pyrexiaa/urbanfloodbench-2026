@@ -1,6 +1,6 @@
 keras  : 3.14.0
 jax    : 0.10.0
-devices: [CpuDevice(id=0)]
+devices: [CudaDevice(id=0)]
 
 
 ============================================================
@@ -12,12 +12,12 @@ devices: [CpuDevice(id=0)]
   [2/3] JIT warm-up …
         out_1d shape: (1, 1, 17, 1)
         out_2d shape: (1, 1, 3716, 1)
-  [3/3] Timing 10 inference runs …
+  [3/3] Timing 50 inference runs …
 
-  ┌─ model_1 inference timing (ms, n=10) ─────────────────┐
-  │  Full forward pass  : 34928.47 ± 11927.60  [min 22592.14, max 61085.92]  │
-  │  1D output read-out :    0.18 ±   0.10  [min 0.04, max 0.42]  │
-  │  2D output read-out :    0.00 ±   0.00  [min 0.00, max 0.01]  │
+  ┌─ model_1 inference timing (ms, n=50) ─────────────────┐
+  │  Full forward pass  : 1707.04 ±  34.81  [min 1650.64, max 1877.23]  │
+  │  1D output read-out :    0.24 ±   0.03  [min 0.18, max 0.33]  │
+  │  2D output read-out :    0.27 ±   0.03  [min 0.21, max 0.33]  │
   └──────────────────────────────────────────────────────────────────┘
 
 ============================================================
@@ -29,12 +29,12 @@ devices: [CpuDevice(id=0)]
   [2/3] JIT warm-up …
         out_1d shape: (1, 1, 198, 1)
         out_2d shape: (1, 1, 4299, 1)
-  [3/3] Timing 10 inference runs …
+  [3/3] Timing 50 inference runs …
 
-  ┌─ model_2 inference timing (ms, n=10) ─────────────────┐
-  │  Full forward pass  : 91357.93 ± 8858.80  [min 81766.44, max 110439.80]  │
-  │  1D output read-out :    0.93 ±   0.81  [min 0.02, max 2.59]  │
-  │  2D output read-out :    0.04 ±   0.07  [min 0.00, max 0.20]  │
+  ┌─ model_2 inference timing (ms, n=50) ─────────────────┐
+  │  Full forward pass  : 2016.04 ±  39.95  [min 1948.49, max 2243.07]  │
+  │  1D output read-out :    0.24 ±   0.03  [min 0.18, max 0.29]  │
+  │  2D output read-out :    0.27 ±   0.03  [min 0.23, max 0.33]  │
   └──────────────────────────────────────────────────────────────────┘
 
 
@@ -43,10 +43,11 @@ devices: [CpuDevice(id=0)]
 ======================================================================
   Model           Full fwd (ms)    1D readout (ms)    2D readout (ms)
   ------------ ---------------- ------------------ ------------------
-  model_1          34928.47 ms           0.181 ms           0.005 ms
-  model_2          91357.93 ms           0.935 ms           0.043 ms
+  model_1           1707.04 ms           0.235 ms           0.273 ms
+  model_2           2016.04 ms           0.243 ms           0.274 ms
 ======================================================================
 
 Note: '1D readout' and '2D readout' are the host-side numpy copy
       costs for each output tensor, measured after the forward pass.
       They do NOT include the LSTM computation itself.
+

@@ -1,0 +1,53 @@
+Running on: cuda
+
+--- Building synthetic graph and tensors ---
+  Model1 Nodes: 3733  (1-D=17, 2-D=3716)
+  Model1 Edges: 11199
+  Model2 Nodes: 4497  (1-D=198, 2-D=4299)
+  Model2 Edges: 13491
+  Node feature dim:  6
+  Edge feature dim:  4
+  Warmup seq len: 10  |  Rollout steps: 90
+
+--- Instantiating models ---
+  Model 1 (SimpleFloodTGCN)    : 3,025,155 parameters
+  Model 2 (EdgeAwareFloodModel): 4,358,883 parameters
+
+================================================================================
+BENCHMARK  —  Inference Time
+================================================================================
+
+[Config]  warmup_runs=10  bench_runs=50  rollout_steps=90  seq_len=10
+
+--- Full rollout (warm-up + all decode steps) ---
+  Model 1 (TGCN)     full rollout  [90 steps]    mean= 139.34 ms  std=  0.03 ms  min= 139.30 ms  max= 139.43 ms
+  Model 2 (EdgeAware) full rollout [90 steps]    mean= 249.99 ms  std=  0.20 ms  min= 249.76 ms  max= 250.55 ms
+
+--- Single decode + step (per-timestep cost) ---
+  Model 1 (TGCN)      single step                mean=   1.73 ms  std=  0.01 ms  min=   1.72 ms  max=   1.76 ms
+  Model 2 (EdgeAware)  single step               mean=   2.87 ms  std=  0.01 ms  min=   2.86 ms  max=   2.90 ms
+
+--- Decode head only (1-D vs 2-D node outputs) ---
+  Model 1 — decode head 1-D nodes                mean=   0.15 ms  std=  0.00 ms  min=   0.15 ms  max=   0.16 ms
+  Model 1 — decode head 2-D nodes                mean=   0.15 ms  std=  0.00 ms  min=   0.14 ms  max=   0.16 ms
+  Model 2 — decode head 1-D nodes                mean=   0.15 ms  std=  0.00 ms  min=   0.14 ms  max=   0.16 ms
+  Model 2 — decode head 2-D nodes                mean=   0.15 ms  std=  0.00 ms  min=   0.14 ms  max=   0.17 ms
+
+================================================================================
+SUMMARY
+================================================================================
+Metric                                                   Model 1 (TGCN)    Model 2 (EdgeAware)
+-----------------------------------------------------------------------------------------------
+  Full rollout  (ms)                                            139.34                249.99
+  Per-step cost (ms)                                              1.73                  2.87
+  Rollout steps                                                     90                    90
+  Model1 1-D nodes                                                  17                    17
+  Model1 2-D nodes                                                3716                  3716
+  Model2 1-D nodes                                                 198                   198
+  Model2 2-D nodes                                                4299                  4299
+  Parameters                                                 3,025,155             4,358,883
+================================================================================
+
+Device: cuda  |  Model 1 Nodes: 3733  |  Model 1 Edges: 11199
+  Model 2 Nodes: 4497  |  Model 2 Edges: 13491
+All times are wall-clock with CUDA synchronisation (mean over 50 runs after 10 warm-up runs).

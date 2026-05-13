@@ -1,7 +1,7 @@
 =================================================================
   HeteroFloodGNN  —  Inference Time Benchmark
 =================================================================
-  Device  : cpu
+  Device  : cuda  (NVIDIA A100 80GB PCIe MIG 3g.40gb)
   Warmup  : 10 runs
   Timed   : 50 runs
 =================================================================
@@ -15,16 +15,16 @@
 
   ┌─────────────────────────────────────────┐
   │  Full forward pass (1D + 2D combined)   │
-  │  Mean  :   30.190 ms              │
-  │  Std   :    1.401 ms              │
-  │  Min   :   28.463 ms              │
-  │  Max   :   37.544 ms              │
-  │  p95   :   32.319 ms              │
+  │  Mean  :    9.907 ms              │
+  │  Std   :    0.850 ms              │
+  │  Min   :    9.038 ms              │
+  │  Max   :   12.407 ms              │
+  │  p95   :   10.774 ms              │
   └─────────────────────────────────────────┘
 
   Estimated per-head inference time (proportional to node count):
-    1D nodes (  17 / 3733 = 0.5%)  →  ~0.1375 ms
-    2D nodes ( 3716 / 3733 = 99.5%)  →  ~30.0527 ms
+    1D nodes (  17 / 3733 = 0.5%)  →  ~0.0451 ms
+    2D nodes ( 3716 / 3733 = 99.5%)  →  ~9.8615 ms
 
   [Model 2]  n_1d= 198  n_2d= 4299  hidden=96  wl_prev=10
             in_1d=44  in_2d=34
@@ -35,30 +35,30 @@
 
   ┌─────────────────────────────────────────┐
   │  Full forward pass (1D + 2D combined)   │
-  │  Mean  :   54.301 ms              │
-  │  Std   :    8.597 ms              │
-  │  Min   :   44.996 ms              │
-  │  Max   :   76.383 ms              │
-  │  p95   :   69.256 ms              │
+  │  Mean  :    9.240 ms              │
+  │  Std   :    0.330 ms              │
+  │  Min   :    9.103 ms              │
+  │  Max   :   11.469 ms              │
+  │  p95   :    9.370 ms              │
   └─────────────────────────────────────────┘
 
   Estimated per-head inference time (proportional to node count):
-    1D nodes ( 198 / 4497 = 4.4%)  →  ~2.3908 ms
-    2D nodes ( 4299 / 4497 = 95.6%)  →  ~51.9103 ms
+    1D nodes ( 198 / 4497 = 4.4%)  →  ~0.4068 ms
+    2D nodes ( 4299 / 4497 = 95.6%)  →  ~8.8331 ms
 
 =================================================================
   SUMMARY  —  Inference Times (mean ± std over 50 runs)
 =================================================================
   Variant                          Mean (ms)   Std (ms)   p95 (ms)
   -------------------------------------------------------------
-  Model 1  —  1D nodes                0.1375     0.0064     0.1472
-  Model 1  —  2D nodes               30.0527     1.3950    32.1713
-  Model 2  —  1D nodes                2.3908     0.3785     3.0493
-  Model 2  —  2D nodes               51.9103     8.2188    66.2069
+  Model 1  —  1D nodes                0.0451     0.0039     0.0491
+  Model 1  —  2D nodes                9.8615     0.8461    10.7251
+  Model 2  —  1D nodes                0.4068     0.0145     0.4125
+  Model 2  —  2D nodes                8.8331     0.3156     8.9570
 
   Full forward pass (1D + 2D together):
-  Model 1  —  full pass               30.190      1.401     32.319
-  Model 2  —  full pass               54.301      8.597     69.256
+  Model 1  —  full pass                9.907      0.850     10.774
+  Model 2  —  full pass                9.240      0.330      9.370
 =================================================================
 
   NOTE: 1D/2D per-head times are proportional estimates.
