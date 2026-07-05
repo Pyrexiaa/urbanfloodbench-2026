@@ -9,6 +9,14 @@ Measures inference time for:
 """
 
 import os
+import sys
+
+# ---------------------------------------------------------------------------
+# 0.  Metrics recorder util (robust import from this script's folder)
+# ---------------------------------------------------------------------------
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root: shared inference_metrics_util.py
+from inference_metrics_util import MetricsRecorder, reset_gpu_peak, gpu_peak_alloc_mb
+
 # ---------------------------------------------------------------------------
 # 1.  JAX / Keras setup
 # ---------------------------------------------------------------------------
@@ -515,12 +523,12 @@ def make_random_inputs(topo, batch_size, input_window, forecast_steps):
 # ---------------------------------------------------------------------------
 
 
-def run_benchmark(model_name, topo):
+def run_benchmark(model_name, topo, rec=None, batch_size=BATCH_SIZE, n_timed=N_TIMED):
     print(f"\n{'=' * 60}")
     print(f"  Benchmarking {model_name.upper()}")
     print(f"  Nodes → 1D: {topo['num_1d_nodes']}  |  2D: {topo['num_2d_nodes']}")
     print(
-        f"  Batch size: {BATCH_SIZE}  |  Input window: {INPUT_WINDOW}  |  Forecast: {FORECAST_STEPS}"
+        f"  Batch size: {batch_size}  |  Input window: {INPUT_WINDOW}  |  Forecast: {FORECAST_STEPS}"
     )
     print(f"{'=' * 60}")
 
@@ -532,7 +540,11 @@ def run_benchmark(model_name, topo):
 
     # Build the model with one forward pass (also JIT-compiles the JAX graph)
     print("  [1/3] Generating synthetic inputs …")
-    inputs = make_random_inputs(topo, BATCH_SIZE, INPUT_WINDOW, FORECAST_STEPS)
+    if rec is not None:
+        with rec.phase("preprocessing"):
+            inputs = make_random_inputs(topo, batch_size, INPUT_WINDOW, FORECAST_STEPS)
+    else:
+        inputs = make_random_inputs(topo, batch_size, INPUT_WINDOW, FORECAST_STEPS)
 
     print("  [2/3] JIT warm-up …")
     for i in range(N_WARMUP):
@@ -544,12 +556,12 @@ def run_benchmark(model_name, topo):
             print(f"        out_1d shape: {np.array(out['out_1d']).shape}")
             print(f"        out_2d shape: {np.array(out['out_2d']).shape}")
 
-    print(f"  [3/3] Timing {N_TIMED} inference runs …")
+    print(f"  [3/3] Timing {n_timed} inference runs …")
     times_total = []
     times_1d = []
     times_2d = []
 
-    for _ in range(N_TIMED):
+    for _ in range(n_timed):
         # Full pass
         t0 = time.perf_counter()
         out = model(inputs, training=False)
@@ -575,7 +587,7 @@ def run_benchmark(model_name, topo):
     m_1d, s_1d, mn_1d, mx_1d = stats(times_1d)
     m_2d, s_2d, mn_2d, mx_2d = stats(times_2d)
 
-    print(f"\n  ┌─ {model_name} inference timing (ms, n={N_TIMED}) ─────────────────┐")
+    print(f"\n  ┌─ {model_name} inference timing (ms, n={n_timed}) ─────────────────┐")
     print(
         f"  │  Full forward pass  : {m_total:7.2f} ± {s_total:6.2f}  [min {mn_total:.2f}, max {mx_total:.2f}]  │"
     )
@@ -593,6 +605,12 @@ def run_benchmark(model_name, topo):
         "full_ms_std": s_total,
         "1d_readout_ms": m_1d,
         "2d_readout_ms": m_2d,
+        # raw per-run seconds + model handle for metrics recording
+        "times_total": times_total,
+        "times_1d": times_1d,
+        "times_2d": times_2d,
+        "model_obj": model,
+        "inputs": inputs,
     }
 
 
@@ -604,9 +622,57 @@ if __name__ == "__main__":
     np.random.seed(42)
     results = []
 
+    # ---- metrics recorder (one per run) ----
+    _device = str(jax.local_devices()[0])
+    rec = MetricsRecorder(
+        solution="1st_solution", framework="JAX/Keras", device=_device
+    )
+    # map internal model_name -> label used in metrics
+    _model_labels = {"model_1": "Model 1", "model_2": "Model 2"}
+    _model_keys = {"model_1": "m1", "model_2": "m2"}
+
     for model_name, topo in MODEL_TOPOLOGIES.items():
-        r = run_benchmark(model_name, topo)
+        r = run_benchmark(model_name, topo, rec=rec)
         results.append(r)
+
+        # ---- record model info + timing + throughput ----
+        label = _model_labels[model_name]
+        key = _model_keys[model_name]
+        n_params = MetricsRecorder.count_params(r["model_obj"])
+        size_mb = None if n_params is None else n_params * 4 / 1e6
+        rec.set_model(label, n_params=n_params, size_mb=size_mb)
+
+        rec.set_timing(f"{key}_total", r["times_total"])
+        rec.set_timing(f"{key}_1d", r["times_1d"])
+        rec.set_timing(f"{key}_2d", r["times_2d"])
+
+        # items = (1d + 2d nodes) * forecast steps
+        nodes = topo["num_1d_nodes"] + topo["num_2d_nodes"]
+        items = nodes * FORECAST_STEPS
+        mean_total_s = float(np.mean(r["times_total"]))
+        rec.set_throughput(f"{key}_rollout", items=items, mean_s=mean_total_s)
+
+    # ---- batch sensitivity sweep (lightweight, few reps) ----
+    print("\n\n" + "=" * 70)
+    print("  Batch sensitivity sweep")
+    print("=" * 70)
+    _sweep_topo = MODEL_TOPOLOGIES["model_1"]
+    _sweep_nodes = _sweep_topo["num_1d_nodes"] + _sweep_topo["num_2d_nodes"]
+    for b in [1, 2, 4, 8]:
+        reset_gpu_peak()
+        try:
+            br = run_benchmark(
+                "model_1", _sweep_topo, rec=None, batch_size=b, n_timed=5
+            )
+            mean_s = float(np.mean(br["times_total"]))
+            rec.add_batch_point(
+                config=f"batch={b}",
+                mean_s=mean_s,
+                items=_sweep_nodes * FORECAST_STEPS * b,
+                gpu_peak_mb=gpu_peak_alloc_mb(),
+            )
+        except Exception as e:
+            print(f"  [batch={b}] skipped due to error: {e}")
 
     # ---- Summary table ----
     print("\n\n" + "=" * 70)
@@ -627,3 +693,6 @@ if __name__ == "__main__":
     print("\nNote: '1D readout' and '2D readout' are the host-side numpy copy")
     print("      costs for each output tensor, measured after the forward pass.")
     print("      They do NOT include the LSTM computation itself.\n")
+
+    # ---- write metrics json + txt into this script's folder ----
+    rec.save(folder=os.path.dirname(os.path.abspath(__file__)))

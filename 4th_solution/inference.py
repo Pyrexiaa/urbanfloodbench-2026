@@ -15,12 +15,17 @@ Usage:
 
 import argparse
 import time
+import os
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import HeteroConv, GATv2Conv, TransformerConv, SAGEConv
 from typing import Optional
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root: shared inference_metrics_util.py
+from inference_metrics_util import MetricsRecorder, reset_gpu_peak, gpu_peak_alloc_mb
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Minimal re-implementations of helpers needed by HeteroFloodGNN
@@ -395,6 +400,37 @@ def make_random_graph(
     return {"1d": x_1d, "2d": x_2d}, edge_index_dict, edge_attr_dict
 
 
+def batch_graph(x_dict, edge_index_dict, edge_attr_dict, n_1d, n_2d, b):
+    """
+    Replicate a single-graph synthetic input B times by tiling node features
+    and offsetting edge indices per block.  The model's batched path is
+    triggered when n_total_1d > num_1d_nodes (see HeteroFloodGNN.forward).
+    Returns fresh dicts; the b == 1 case returns the inputs unchanged.
+    """
+    if b == 1:
+        return x_dict, edge_index_dict, edge_attr_dict
+
+    node_counts = {"1d": n_1d, "2d": n_2d}
+    x_b = {k: v.repeat(b, 1) for k, v in x_dict.items()}
+
+    # src/dst node types per edge relation (rel[0] -> rel[2])
+    ei_b = {}
+    for rel, ei in edge_index_dict.items():
+        src_n = node_counts[rel[0]]
+        dst_n = node_counts[rel[2]]
+        blocks = []
+        for i in range(b):
+            off = torch.tensor([[src_n * i], [dst_n * i]], device=ei.device)
+            blocks.append(ei + off)
+        ei_b[rel] = torch.cat(blocks, dim=1)
+
+    ea_b = None
+    if edge_attr_dict is not None:
+        ea_b = {k: v.repeat(b, 1) for k, v in edge_attr_dict.items()}
+
+    return x_b, ei_b, ea_b
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Model specifications  (matching configs in file.py / train.py)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -585,6 +621,8 @@ def main():
     print(f"  Timed   : {args.n_runs} runs")
     print("=" * 65)
 
+    rec = MetricsRecorder("4th_solution", "PyTorch + torch_geometric", device)
+
     results = {}
 
     for model_id, spec in MODEL_SPECS.items():
@@ -603,17 +641,29 @@ def main():
         n_params = sum(p.numel() for p in model.parameters())
         print(f"  Parameters: {n_params:,}")
 
-        # Build synthetic input
-        x_dict, edge_index_dict, edge_attr_dict = make_random_graph(
+        # Build synthetic input (timed as the preprocessing phase)
+        with rec.phase("preprocessing"):
+            x_dict, edge_index_dict, edge_attr_dict = make_random_graph(
+                n_1d=spec["n_1d"],
+                n_2d=spec["n_2d"],
+                n_edges_1d=spec["n_edges_1d"],
+                n_edges_2d=spec["n_edges_2d"],
+                n_coupling=spec["n_coupling"],
+                in_1d=in_1d,
+                in_2d=in_2d,
+                edge_dim_1d=EDGE_DIM_1D if USE_EDGE_FEATURES else 0,
+                device=device,
+            )
+
+        # ── Metrics: model info ────────────────────────────────────────────
+        n_params_rec = rec.count_params(model)
+        rec.set_model(
+            f"Model {model_id}",
+            n_params=n_params_rec,
+            size_mb=(n_params_rec * 4 / 1e6) if n_params_rec is not None else None,
             n_1d=spec["n_1d"],
             n_2d=spec["n_2d"],
-            n_edges_1d=spec["n_edges_1d"],
-            n_edges_2d=spec["n_edges_2d"],
-            n_coupling=spec["n_coupling"],
-            in_1d=in_1d,
-            in_2d=in_2d,
-            edge_dim_1d=EDGE_DIM_1D if USE_EDGE_FEATURES else 0,
-            device=device,
+            hidden_dim=spec["hidden_dim"],
         )
 
         out, times = measure_inference(
@@ -678,6 +728,37 @@ def main():
         results[model_id]["est_1d_ms"] = est_1d_ms
         results[model_id]["est_2d_ms"] = est_2d_ms
 
+        # ── Metrics: timing / throughput / phase / batch sensitivity ───────
+        times_s = [float(t) / 1000.0 for t in times]  # ms -> seconds
+        total_nodes = spec["n_1d"] + spec["n_2d"]
+        rec.set_timing(f"m{model_id}_single_step", times_s)
+        rec.set_throughput(
+            f"m{model_id}", items=total_nodes, mean_s=float(mean_ms) / 1000.0
+        )
+
+        # One representative forward pass timed as the "inference" phase.
+        with rec.phase("inference"):
+            with torch.no_grad():
+                _ = model(x_dict, edge_index_dict, edge_attr_dict)
+
+        # Batch sensitivity: replicate the graph B times and time each config.
+        for b in (1, 2, 4, 8):
+            xb, eib, eab = batch_graph(
+                x_dict, edge_index_dict, edge_attr_dict,
+                spec["n_1d"], spec["n_2d"], b,
+            )
+            reset_gpu_peak()
+            _, times_b = measure_inference(
+                model, xb, eib, eab, device=device,
+                n_warmup=max(1, args.n_warmup // 2), n_runs=args.n_runs,
+            )
+            rec.add_batch_point(
+                config=f"m{model_id}_batch={b}",
+                mean_s=float(times_b.mean()) / 1000.0,
+                items=total_nodes * b,
+                gpu_peak_mb=gpu_peak_alloc_mb(),
+            )
+
         del model
         if device.type == "cuda":
             torch.cuda.empty_cache()
@@ -726,6 +807,8 @@ def main():
     print("        forward pass; they cannot be isolated without")
     print("        architectural changes.")
     print("=" * 65)
+
+    rec.save(folder=os.path.dirname(os.path.abspath(__file__)))
 
 
 if __name__ == "__main__":

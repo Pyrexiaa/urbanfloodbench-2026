@@ -34,6 +34,8 @@ All randomness is seeded so results are reproducible.
 """
 
 import argparse
+import os
+import sys
 import time
 import warnings
 from typing import List, Tuple
@@ -41,6 +43,9 @@ from typing import List, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root: shared inference_metrics_util.py
+from inference_metrics_util import MetricsRecorder, reset_gpu_peak, gpu_peak_alloc_mb
 
 # ---------------------------------------------------------------------------
 # LightGBM stub – avoids the macOS OpenMP segfault that hits when LightGBM
@@ -229,7 +234,12 @@ def get_device() -> torch.device:
 
 
 def timer(fn, n_runs: int) -> Tuple[float, float, float]:
-    """Return (best_time_sec, mean_time_sec, std_time_sec) across n_runs calls."""
+    """Return (best_time_sec, mean_time_sec, std_time_sec) across n_runs calls.
+
+    Also stores the raw per-run times list on ``timer.last_times`` so callers
+    (e.g. the metrics recorder) can access the full distribution without
+    re-timing.
+    """
     times = []
     for _ in range(n_runs):
         t0 = time.perf_counter()
@@ -237,6 +247,7 @@ def timer(fn, n_runs: int) -> Tuple[float, float, float]:
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         times.append(time.perf_counter() - t0)
+    timer.last_times = list(times)
     return min(times), float(np.mean(times)), float(np.std(times))
 
 
@@ -888,6 +899,11 @@ def main():
 
     section("Environment")
     device = get_device()
+
+    # --- inference metrics recorder (additive; does not alter behavior) ------
+    rec = MetricsRecorder(
+        "5th_solution", "PyTorch (Ridge+LightGBM+PI-GNN)", device
+    )
     print(f"  Events          : {N_EV}")
     print(f"  Timesteps       : {N_T}")
     print(f"  Model 1 – 1D nodes : {M1_N1}")
@@ -900,12 +916,13 @@ def main():
     # -----------------------------------------------------------------------
     section("Building synthetic data")
     # -----------------------------------------------------------------------
-    # Model 1 event sets
-    ev_m1_1d = make_events_1d(N_EV, N_T, M1_N1, rng)
-    ev_m1_2d = make_events_2d(N_EV, N_T, M1_N2, rng)
-    # Model 2 event sets
-    ev_m2_1d = make_events_1d(N_EV, N_T, M2_N1, rng)
-    ev_m2_2d = make_events_2d(N_EV, N_T, M2_N2, rng)
+    with rec.phase("preprocessing"):
+        # Model 1 event sets
+        ev_m1_1d = make_events_1d(N_EV, N_T, M1_N1, rng)
+        ev_m1_2d = make_events_2d(N_EV, N_T, M1_N2, rng)
+        # Model 2 event sets
+        ev_m2_1d = make_events_1d(N_EV, N_T, M2_N1, rng)
+        ev_m2_2d = make_events_2d(N_EV, N_T, M2_N2, rng)
     print(f"  M1 1D events : ({N_EV}, {N_T}, {M1_N1})")
     print(f"  M1 2D events : ({N_EV}, {N_T}, {M1_N2})")
     print(f"  M2 1D events : ({N_EV}, {N_T}, {M2_N1})")
@@ -1009,6 +1026,17 @@ def main():
         gnn_models.append(g)
     print(f"  Built {N_ENS} GNN members → device={device}")
 
+    # Record PI-GNN model info (Model 2 – 1D) from a representative member.
+    _gnn_params = rec.count_params(gnn_models[0])
+    rec.set_model(
+        "PI-GNN Model2 1D",
+        n_params=_gnn_params,
+        size_mb=(None if _gnn_params is None else _gnn_params * 4 / 1e6),
+        d_model=GNN_D_MODEL,
+        n_layers=GNN_N_LAYERS,
+        n_nodes=M2_N1,
+    )
+
     # -----------------------------------------------------------------------
     section("Warm-up pass (1 run, not timed)")
     # -----------------------------------------------------------------------
@@ -1038,6 +1066,12 @@ def main():
     print(
         f"  Model 1 – 1D  (Ridge+LightGBM Rain-3, {M1_N1:>4} nodes):  best={best_m1_1d * 1e3:8.1f} ms  mean={mean_m1_1d * 1e3:8.1f} ms  std={std_m1_1d * 1e3:8.1f} ms"
     )
+    rec.set_timing("Model1-1D Ridge+LightGBM", timer.last_times)
+    rec.set_throughput(
+        "Model1-1D Ridge+LightGBM",
+        items=N_EV * M1_N1 * max(0, N_T - M1_START_T),
+        mean_s=mean_m1_1d,
+    )
 
     best_m1_2d, mean_m1_2d, std_m1_2d = timer(
         lambda: infer_m1_2d(
@@ -1047,6 +1081,12 @@ def main():
     )
     print(
         f"  Model 1 – 2D  (Ridge+LightGBM Rain-3, {M1_N2:>4} nodes):  best={best_m1_2d * 1e3:8.1f} ms  mean={mean_m1_2d * 1e3:8.1f} ms  std={std_m1_2d * 1e3:8.1f} ms"
+    )
+    rec.set_timing("Model1-2D Ridge+LightGBM", timer.last_times)
+    rec.set_throughput(
+        "Model1-2D Ridge+LightGBM",
+        items=N_EV * M1_N2 * max(0, N_T - M1_START_T),
+        mean_s=mean_m1_2d,
     )
 
     best_m2_1d, mean_m2_1d, std_m2_1d = timer(
@@ -1058,6 +1098,12 @@ def main():
     print(
         f"  Model 2 – 1D  (Physics-Informed GNN,   {M2_N1:>4} nodes):  best={best_m2_1d * 1e3:8.1f} ms  mean={mean_m2_1d * 1e3:8.1f} ms  std={std_m2_1d * 1e3:8.1f} ms"
     )
+    rec.set_timing("Model2-1D PI-GNN", timer.last_times)
+    rec.set_throughput(
+        "Model2-1D PI-GNN",
+        items=N_EV * M2_N1 * max(0, N_T - GNN_START_T),
+        mean_s=mean_m2_1d,
+    )
 
     best_m2_2d, mean_m2_2d, std_m2_2d = timer(
         lambda: infer_m2_2d(
@@ -1067,6 +1113,12 @@ def main():
     )
     print(
         f"  Model 2 – 2D  (Ridge+LGBM+PI feats,   {M2_N2:>4} nodes):  best={best_m2_2d * 1e3:8.1f} ms  mean={mean_m2_2d * 1e3:8.1f} ms  std={std_m2_2d * 1e3:8.1f} ms"
+    )
+    rec.set_timing("Model2-2D Ridge+LightGBM+PI", timer.last_times)
+    rec.set_throughput(
+        "Model2-2D Ridge+LightGBM+PI",
+        items=N_EV * M2_N2 * max(0, N_T - M2T_START_T),
+        mean_s=mean_m2_2d,
     )
 
     # -----------------------------------------------------------------------
@@ -1183,6 +1235,35 @@ def main():
     print("  Times are wall-clock seconds × 1000 (milliseconds).")
     print("  'Best' = min across runs; 'Mean' = average across runs.")
     print()
+
+    # -----------------------------------------------------------------------
+    # Batch sensitivity: sweep the number of synthetic events on the dominant
+    # neural component (PI-GNN, Model 2 – 1D).  Small reps to stay cheap.
+    # -----------------------------------------------------------------------
+    section("Batch sensitivity sweep (PI-GNN, Model 2 – 1D)")
+    sweep_reps = max(1, min(3, N_RUNS))
+    for n in [5, 10, 20, 40]:
+        sweep_events = make_events_1d(n, N_T, M2_N1, rng)
+        # warm-up (not timed)
+        infer_gnn_1d(
+            [sweep_events[0]], gnn_models[0], device, M2_N1, GNN_GRAPH_BATCH_SIZE, rng
+        )
+        reset_gpu_peak()
+        _b, mean_sweep, _s = timer(
+            lambda ev=sweep_events: infer_gnn_1d(
+                ev, gnn_models[0], device, M2_N1, GNN_GRAPH_BATCH_SIZE, rng
+            ),
+            sweep_reps,
+        )
+        rec.add_batch_point(
+            config=f"n_events={n}",
+            mean_s=mean_sweep,
+            items=n * M2_N1 * max(0, N_T - GNN_START_T),
+            gpu_peak_mb=gpu_peak_alloc_mb(),
+        )
+        print(f"  n_events={n:>3}: mean={mean_sweep * 1e3:8.1f} ms")
+
+    rec.save(folder=os.path.dirname(os.path.abspath(__file__)))
 
 
 if __name__ == "__main__":

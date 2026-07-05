@@ -23,10 +23,15 @@ Usage
 
 import argparse
 import time
+import os
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root: shared inference_metrics_util.py
+from inference_metrics_util import MetricsRecorder, reset_gpu_peak, gpu_peak_alloc_mb
 
 # ─────────────────────────── topology constants ──────────────────────────────
 # M1: 17 1D nodes, 3 716 2D nodes  (from pipeline docs)
@@ -388,7 +393,7 @@ def rollout_timed(model, graph, T, device):
 
 
 def benchmark_model(
-    label, n_1d, n_2d, n_e1d, n_e2d, n_coup, T, device, n_warmup=2, n_bench=5
+    label, n_1d, n_2d, n_e1d, n_e2d, n_coup, T, device, n_warmup=2, n_bench=5, rec=None
 ):
     """Create model + synthetic data, warm up, then benchmark."""
     print(f"\n{'─' * 60}")
@@ -400,7 +405,21 @@ def benchmark_model(
         num_processor_layers=N_PROC_LAYERS,
     ).to(device)
 
-    graph = SyntheticGraph(n_1d, n_2d, n_e1d, n_e2d, n_coup, device, T)
+    # ── Synthetic-data construction (preprocessing phase) ─────────────────
+    if rec is not None:
+        with rec.phase(f"preprocessing_{label.lower()}"):
+            graph = SyntheticGraph(n_1d, n_2d, n_e1d, n_e2d, n_coup, device, T)
+    else:
+        graph = SyntheticGraph(n_1d, n_2d, n_e1d, n_e2d, n_coup, device, T)
+
+    # ── Record model parameter counts / size ─────────────────────────────
+    if rec is not None:
+        n_params = rec.count_params(model)
+        rec.set_model(
+            f"Model {label[-1]}" if label[-1].isdigit() else label,
+            n_params=n_params,
+            size_mb=(n_params * 4 / 1e6) if n_params is not None else None,
+        )
 
     # ── Warmup runs (not timed) ──────────────────────────────────────────
     print(f"  Warming up ({n_warmup} rollout(s))…", end=" ", flush=True)
@@ -440,6 +459,9 @@ def benchmark_model(
         "gpu_2d_total_ms_std": float(np.std(ms_2d)),
         "gpu_1d_per_step_ms": float(np.mean(ps_1d)),
         "gpu_2d_per_step_ms": float(np.mean(ps_2d)),
+        "wall_runs_s": [float(x) for x in walls],
+        "model": model,
+        "graph": graph,
     }
 
 
@@ -522,6 +544,9 @@ def main():
     print(f"PyTorch: {torch.__version__}")
     print(f"Rollout steps T={args.steps}  warmup={args.n_warmup}  bench={args.n_bench}")
 
+    # ── Metrics recorder ──────────────────────────────────────────────────
+    rec = MetricsRecorder("3rd_solution", "PyTorch", device)
+
     all_results = []
 
     # ── Model 1 ──────────────────────────────────────────────────────────
@@ -536,6 +561,7 @@ def main():
         device=device,
         n_warmup=args.n_warmup,
         n_bench=args.n_bench,
+        rec=rec,
     )
     all_results.append(r_m1)
 
@@ -551,6 +577,7 @@ def main():
         device=device,
         n_warmup=args.n_warmup,
         n_bench=args.n_bench,
+        rec=rec,
     )
     all_results.append(r_m2)
 
@@ -594,6 +621,51 @@ def main():
     for name, total, std, per_step in rows:
         print(f"  {name:<10} {total:>18.1f} {std:>10.2f} {per_step:>16.3f}")
     print(f"{'═' * 80}\n")
+
+    # ── Record metrics into inference_metrics.{json,txt} ──────────────────
+    steps = args.steps
+
+    # Representative full rollout (M1) timed under the "inference" phase.
+    with rec.phase("inference"):
+        rollout_timed(r_m1["model"], r_m1["graph"], steps, device)
+
+    # Per-rollout benchmark times (warmup excluded — set_timing uses bench runs).
+    rec.set_timing("m1_rollout", r_m1["wall_runs_s"])
+    rec.set_timing("m2_rollout", r_m2["wall_runs_s"])
+
+    m1_nodes = M1_N_1D + M1_N_2D
+    m2_nodes = M2_N_1D + M2_N_2D
+    rec.set_throughput("m1", items=m1_nodes * steps, mean_s=r_m1["wall_mean_s"])
+    rec.set_throughput("m2", items=m2_nodes * steps, mean_s=r_m2["wall_mean_s"])
+
+    # ── Rollout-length (AR) sensitivity sweep on M1 ───────────────────────
+    print(f"\n{'═' * 80}")
+    print("  ROLLOUT-LENGTH SENSITIVITY SWEEP (M1)")
+    print(f"{'═' * 80}")
+    sweep_model = r_m1["model"]
+    sweep_reps = 2
+    for s in [50, 100, 200, 400]:
+        sweep_graph = SyntheticGraph(
+            M1_N_1D, M1_N_2D, M1_E_1D, M1_E_2D, M1_E_COUP, device, s
+        )
+        rollout_timed(sweep_model, sweep_graph, s, device)  # warmup
+        reset_gpu_peak()
+        run_times = [
+            rollout_timed(sweep_model, sweep_graph, s, device)["wall_total_s"]
+            for _ in range(sweep_reps)
+        ]
+        mean_s = float(np.mean(run_times))
+        peak = gpu_peak_alloc_mb()
+        rec.add_batch_point(
+            config=f"steps={s}",
+            mean_s=mean_s,
+            items=m1_nodes * s,
+            gpu_peak_mb=peak,
+        )
+        print(f"  steps={s:<5} mean={mean_s:.4f}s  gpu_peak_mb={peak}")
+    print(f"{'═' * 80}\n")
+
+    rec.save(folder=os.path.dirname(os.path.abspath(__file__)))
 
 
 if __name__ == "__main__":
