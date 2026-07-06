@@ -40,6 +40,7 @@ import statistics
 def _torch():
     try:
         import torch
+
         return torch
     except Exception:
         return None
@@ -70,6 +71,7 @@ def gpu_peak_alloc_mb():
         return t.cuda.max_memory_allocated() / 1e6
     try:
         import jax
+
         st = jax.devices()[0].memory_stats()
         if st and "peak_bytes_in_use" in st:
             return st["peak_bytes_in_use"] / 1e6
@@ -107,7 +109,7 @@ class Phase:
         gpu_sync()
         wall = time.perf_counter() - self._w0
         cpu = time.process_time() - self._c0
-        self.rec.data["phases"][self.name] = {
+        self.rec._section()["phases"][self.name] = {
             "wall_s": wall,
             "cpu_s": cpu,
             "gpu_peak_alloc_mb": gpu_peak_alloc_mb(),
@@ -119,21 +121,25 @@ class Phase:
 # recorder
 # ---------------------------------------------------------------------------
 class MetricsRecorder:
-    def __init__(self, solution, framework, device):
+    def __init__(self, solution, framework, device=None):
         self.data = {
             "solution": solution,
             "framework": framework,
-            "device": str(device),
+            "device": None,
             "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
             "platform": platform.platform(),
             "python": platform.python_version(),
             "hardware": {},
+            # Top-level buckets are used when no device is set (single-device /
+            # backward-compatible use). When set_device() is called, metrics are
+            # written into a per-device section under "devices" instead.
             "model": {},
             "phases": {},
             "timing": {},
             "throughput": {},
             "batch_sensitivity": [],
             "memory": {},
+            "devices": {},
             "external_reference_required": {
                 "hecras_runtime_s": None,
                 "speedup_vs_hecras": None,
@@ -156,10 +162,57 @@ class MetricsRecorder:
                 self.data["hardware"]["cuda"] = t.version.cuda
         try:
             import jax
+
             self.data["hardware"]["jax"] = jax.__version__
             self.data["hardware"]["jax_devices"] = [str(d) for d in jax.devices()]
         except Exception:
             pass
+
+        # Current per-device section (None => write to top-level buckets).
+        self._cur_device = None
+        if device is not None:
+            self.set_device(device)
+
+    # ---- device selection ----
+    @staticmethod
+    def _new_section():
+        return {
+            "model": {},
+            "phases": {},
+            "timing": {},
+            "throughput": {},
+            "batch_sensitivity": [],
+            "memory": {},
+        }
+
+    def _section(self):
+        """The dict metrics are currently written into (device or top-level)."""
+        if self._cur_device is None:
+            return self.data
+        return self.data["devices"][self._cur_device]
+
+    def set_device(self, device):
+        """Direct subsequent metrics into a section for `device`.
+
+        Lets a single recorder capture separate GPU and CPU sections in one
+        JSON. Returns the device so callers can do `dev = rec.set_device(dev)`.
+        """
+        key = str(device)
+        self.data["device"] = key
+        self._cur_device = key
+        if key not in self.data["devices"]:
+            self.data["devices"][key] = self._new_section()
+        return device
+
+    def devices_to_run(self):
+        """Devices to benchmark: [cuda, cpu] if a GPU is visible, else [cpu]."""
+        t = _torch()
+        if t is not None:
+            if t.cuda.is_available():
+                return [t.device("cuda"), t.device("cpu")]
+            return [t.device("cpu")]
+        # No torch: fall back to string labels (JAX callers build their own list)
+        return ["cpu"]
 
     # ---- phase timing ----
     def phase(self, name, reset_gpu=True):
@@ -184,7 +237,7 @@ class MetricsRecorder:
         return None if n is None else n * bytes_per_param / 1e6
 
     def set_model(self, name, n_params=None, size_mb=None, **extra):
-        self.data["model"][name] = {
+        self._section()["model"][name] = {
             "n_params": None if n_params is None else int(n_params),
             "size_mb": size_mb,
             **extra,
@@ -195,7 +248,7 @@ class MetricsRecorder:
         arr = [float(x) for x in times]
         if not arr:
             return
-        self.data["timing"][label] = {
+        self._section()["timing"][label] = {
             "runs": len(arr),
             "mean_s": statistics.mean(arr),
             "std_s": statistics.pstdev(arr) if len(arr) > 1 else 0.0,
@@ -203,40 +256,99 @@ class MetricsRecorder:
             "min_s": min(arr),
             "max_s": max(arr),
         }
-        return self.data["timing"][label]
+        return self._section()["timing"][label]
 
     def set_throughput(self, label, items, mean_s):
-        self.data["throughput"][label] = {
+        self._section()["throughput"][label] = {
             "items": items,
             "mean_s": mean_s,
             "items_per_s": (items / mean_s) if mean_s else None,
         }
 
     # ---- batch / rollout sensitivity ----
-    def add_batch_point(self, config, mean_s, items=None, gpu_peak_mb=None, **extra):
-        self.data["batch_sensitivity"].append({
-            "config": config,
-            "mean_s": mean_s,
-            "items": items,
-            "items_per_s": (items / mean_s) if (items and mean_s) else None,
-            "gpu_peak_alloc_mb": gpu_peak_mb,
-            **extra,
-        })
+    def add_batch_point(
+        self, config, times=None, mean_s=None, items=None, gpu_peak_mb=None, **extra
+    ):
+        """Record one batch/rollout sweep point.
+
+        Accepts either a list of per-run `times` (mean/std are derived) or a
+        precomputed `mean_s`.
+        """
+        std_s = None
+        if times is not None:
+            arr = [float(x) for x in times]
+            if arr:
+                mean_s = statistics.mean(arr)
+                std_s = statistics.pstdev(arr) if len(arr) > 1 else 0.0
+        self._section()["batch_sensitivity"].append(
+            {
+                "config": config,
+                "mean_s": mean_s,
+                "std_s": std_s,
+                "items": items,
+                "items_per_s": (items / mean_s) if (items and mean_s) else None,
+                "gpu_peak_alloc_mb": gpu_peak_mb,
+                **extra,
+            }
+        )
 
     def set(self, key, value):
         self.data[key] = value
 
     # ---- finalize + write ----
     def _finalize_memory(self):
-        self.data["memory"]["peak_cpu_rss_mb"] = _peak_cpu_rss_mb()
+        mem = self._section()["memory"]
+        mem["peak_cpu_rss_mb"] = _peak_cpu_rss_mb()
         if _cuda_available():
             t = _torch()
-            self.data["memory"]["gpu_max_allocated_mb"] = t.cuda.max_memory_allocated() / 1e6
-            self.data["memory"]["gpu_max_reserved_mb"] = t.cuda.max_memory_reserved() / 1e6
+            mem["gpu_max_allocated_mb"] = t.cuda.max_memory_allocated() / 1e6
+            mem["gpu_max_reserved_mb"] = t.cuda.max_memory_reserved() / 1e6
         else:
             gp = gpu_peak_alloc_mb()
             if gp is not None:
-                self.data["memory"]["gpu_peak_alloc_mb"] = gp
+                mem["gpu_peak_alloc_mb"] = gp
+
+    @staticmethod
+    def _pretty_section(sec, L, indent=""):
+        if sec.get("model"):
+            L.append(indent + "-- model --")
+            for k, v in sec["model"].items():
+                L.append(
+                    indent
+                    + f"  {k}: params={v.get('n_params')}, size_mb={v.get('size_mb')}"
+                )
+            L.append("")
+        if sec.get("phases"):
+            L.append(indent + "-- phase timing (wall / cpu seconds; gpu peak MB) --")
+            for k, v in sec["phases"].items():
+                L.append(
+                    indent
+                    + f"  {k:<16} wall={v['wall_s']:.5f}  cpu={v['cpu_s']:.5f}  gpu_peak={v['gpu_peak_alloc_mb']}"
+                )
+            L.append("")
+        if sec.get("timing"):
+            L.append(indent + "-- benchmark timing --")
+            for k, v in sec["timing"].items():
+                L.append(
+                    indent
+                    + f"  {k:<16} mean={v['mean_s']:.5f}s  std={v['std_s']:.5f}  median={v['median_s']:.5f}  (n={v['runs']})"
+                )
+            L.append("")
+        if sec.get("batch_sensitivity"):
+            L.append(indent + "-- batch / rollout sensitivity --")
+            for b in sec["batch_sensitivity"]:
+                _m = b["mean_s"]
+                _mean = f"{_m:.5f}s" if isinstance(_m, (int, float)) else str(_m)
+                L.append(
+                    indent
+                    + f"  {str(b['config']):<20} mean={_mean}  items/s={b['items_per_s']}  gpu_peak={b['gpu_peak_alloc_mb']}"
+                )
+            L.append("")
+        if sec.get("memory"):
+            L.append(indent + "-- memory --")
+            for k, v in sec["memory"].items():
+                L.append(indent + f"  {k}: {v}")
+            L.append("")
 
     def _pretty(self):
         d = self.data
@@ -249,33 +361,18 @@ class MetricsRecorder:
         L.append(f"timestamp : {d['timestamp']}")
         L.append(f"platform  : {d['platform']}  (python {d['python']})")
         if d["hardware"]:
-            L.append("hardware  : " + ", ".join(f"{k}={v}" for k, v in d["hardware"].items()))
+            L.append(
+                "hardware  : " + ", ".join(f"{k}={v}" for k, v in d["hardware"].items())
+            )
         L.append("")
-        if d["model"]:
-            L.append("-- model --")
-            for k, v in d["model"].items():
-                L.append(f"  {k}: params={v.get('n_params')}, size_mb={v.get('size_mb')}")
-            L.append("")
-        if d["phases"]:
-            L.append("-- phase timing (wall / cpu seconds; gpu peak MB) --")
-            for k, v in d["phases"].items():
-                L.append(f"  {k:<16} wall={v['wall_s']:.5f}  cpu={v['cpu_s']:.5f}  gpu_peak={v['gpu_peak_alloc_mb']}")
-            L.append("")
-        if d["timing"]:
-            L.append("-- benchmark timing --")
-            for k, v in d["timing"].items():
-                L.append(f"  {k:<16} mean={v['mean_s']:.5f}s  std={v['std_s']:.5f}  median={v['median_s']:.5f}  (n={v['runs']})")
-            L.append("")
-        if d["batch_sensitivity"]:
-            L.append("-- batch / rollout sensitivity --")
-            for b in d["batch_sensitivity"]:
-                L.append(f"  {b['config']:<20} mean={b['mean_s']:.5f}s  items/s={b['items_per_s']}  gpu_peak={b['gpu_peak_alloc_mb']}")
-            L.append("")
-        if d["memory"]:
-            L.append("-- memory --")
-            for k, v in d["memory"].items():
-                L.append(f"  {k}: {v}")
-            L.append("")
+        # Top-level section (used when no device was set).
+        self._pretty_section(d, L)
+        # Per-device sections.
+        for dev, sec in d.get("devices", {}).items():
+            L.append("#" * 64)
+            L.append(f"# DEVICE: {dev}")
+            L.append("#" * 64)
+            self._pretty_section(sec, L)
         L.append("-- external reference required (NOT from dummy inference) --")
         for k, v in d["external_reference_required"].items():
             L.append(f"  {k}: {v}")
