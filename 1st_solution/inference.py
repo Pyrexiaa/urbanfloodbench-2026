@@ -14,7 +14,9 @@ import sys
 # ---------------------------------------------------------------------------
 # 0.  Metrics recorder util (robust import from this script's folder)
 # ---------------------------------------------------------------------------
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root: shared inference_metrics_util.py
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)  # repo root: shared inference_metrics_util.py
 from inference_metrics_util import MetricsRecorder, reset_gpu_peak, gpu_peak_alloc_mb
 
 # ---------------------------------------------------------------------------
@@ -39,13 +41,13 @@ print(f"devices: {jax.local_devices()}\n")
 # ---------------------------------------------------------------------------
 MODEL_TOPOLOGIES = {
     "model_1": dict(
-        num_1d_nodes=17, # model 1 1d nodes
-        num_2d_nodes=3716, # model 1 2d nodes
-        max_e_1d_from=16, # model 1 max edges from 1d node
-        max_e_1d_to=16, # model 1 max edges to 1d node
-        max_e_2d_from=7935, # model 1 max edges from 2d node
-        max_e_2d_to=7935, # model 1 max edges to 2d node
-        num_1d2d_conn=16, # model 1 number of 1d-2d connections
+        num_1d_nodes=17,  # model 1 1d nodes
+        num_2d_nodes=3716,  # model 1 2d nodes
+        max_e_1d_from=16,  # model 1 max edges from 1d node
+        max_e_1d_to=16,  # model 1 max edges to 1d node
+        max_e_2d_from=7935,  # model 1 max edges from 2d node
+        max_e_2d_to=7935,  # model 1 max edges to 2d node
+        num_1d2d_conn=16,  # model 1 number of 1d-2d connections
     ),
     "model_2": dict(
         num_1d_nodes=198,
@@ -620,76 +622,98 @@ def run_benchmark(model_name, topo, rec=None, batch_size=BATCH_SIZE, n_timed=N_T
 
 if __name__ == "__main__":
     np.random.seed(42)
-    results = []
 
-    # ---- metrics recorder (one per run) ----
-    _device = str(jax.local_devices()[0])
-    rec = MetricsRecorder(
-        solution="1st_solution", framework="JAX/Keras", device=_device
-    )
+    # ---- metrics recorder (one JSON with a GPU and a CPU section) ----
+    rec = MetricsRecorder(solution="1st_solution", framework="JAX/Keras")
+
     # map internal model_name -> label used in metrics
     _model_labels = {"model_1": "Model 1", "model_2": "Model 2"}
     _model_keys = {"model_1": "m1", "model_2": "m2"}
 
-    for model_name, topo in MODEL_TOPOLOGIES.items():
-        r = run_benchmark(model_name, topo, rec=rec)
-        results.append(r)
+    # Devices to benchmark: GPU (if JAX sees one) then CPU.
+    _cpu_dev = jax.devices("cpu")[0]
+    try:
+        _gpu_devs = jax.devices("gpu")
+    except Exception:
+        _gpu_devs = []
+    _run_devices = ([_gpu_devs[0]] if _gpu_devs else []) + [_cpu_dev]
 
-        # ---- record model info + timing + throughput ----
-        label = _model_labels[model_name]
-        key = _model_keys[model_name]
-        n_params = MetricsRecorder.count_params(r["model_obj"])
-        size_mb = None if n_params is None else n_params * 4 / 1e6
-        rec.set_model(label, n_params=n_params, size_mb=size_mb)
+    for _dev in _run_devices:
+        rec.set_device(_dev)
+        _is_cpu = "cpu" in str(_dev).lower()
+        _n_timed = 10 if _is_cpu else N_TIMED
+        print("\n\n" + "#" * 70)
+        print(f"#  JAX DEVICE: {_dev}   ({'CPU' if _is_cpu else 'GPU'})")
+        print("#" * 70)
 
-        rec.set_timing(f"{key}_total", r["times_total"])
-        rec.set_timing(f"{key}_1d", r["times_1d"])
-        rec.set_timing(f"{key}_2d", r["times_2d"])
+        results = []
+        # jax.default_device places all subsequent computation on this device.
+        with jax.default_device(_dev):
+            for model_name, topo in MODEL_TOPOLOGIES.items():
+                r = run_benchmark(model_name, topo, rec=rec, n_timed=_n_timed)
+                results.append(r)
 
-        # items = (1d + 2d nodes) * forecast steps
-        nodes = topo["num_1d_nodes"] + topo["num_2d_nodes"]
-        items = nodes * FORECAST_STEPS
-        mean_total_s = float(np.mean(r["times_total"]))
-        rec.set_throughput(f"{key}_rollout", items=items, mean_s=mean_total_s)
+                # ---- record model info + timing + throughput ----
+                label = _model_labels[model_name]
+                key = _model_keys[model_name]
+                n_params = MetricsRecorder.count_params(r["model_obj"])
+                size_mb = None if n_params is None else n_params * 4 / 1e6
+                rec.set_model(label, n_params=n_params, size_mb=size_mb)
 
-    # ---- batch sensitivity sweep (lightweight, few reps) ----
-    print("\n\n" + "=" * 70)
-    print("  Batch sensitivity sweep")
-    print("=" * 70)
-    _sweep_topo = MODEL_TOPOLOGIES["model_1"]
-    _sweep_nodes = _sweep_topo["num_1d_nodes"] + _sweep_topo["num_2d_nodes"]
-    for b in [1, 2, 4, 8]:
-        reset_gpu_peak()
-        try:
-            br = run_benchmark(
-                "model_1", _sweep_topo, rec=None, batch_size=b, n_timed=5
-            )
-            mean_s = float(np.mean(br["times_total"]))
-            rec.add_batch_point(
-                config=f"batch={b}",
-                mean_s=mean_s,
-                items=_sweep_nodes * FORECAST_STEPS * b,
-                gpu_peak_mb=gpu_peak_alloc_mb(),
-            )
-        except Exception as e:
-            print(f"  [batch={b}] skipped due to error: {e}")
+                rec.set_timing(f"{key}_total", r["times_total"])
+                rec.set_timing(f"{key}_1d", r["times_1d"])
+                rec.set_timing(f"{key}_2d", r["times_2d"])
 
-    # ---- Summary table ----
-    print("\n\n" + "=" * 70)
-    print("  SUMMARY — Inference Time Comparison")
-    print("=" * 70)
-    print(
-        f"  {'Model':<12} {'Full fwd (ms)':>16} {'1D readout (ms)':>18} {'2D readout (ms)':>18}"
-    )
-    print(f"  {'-' * 12} {'-' * 16} {'-' * 18} {'-' * 18}")
-    for r in results:
+                # items = (1d + 2d nodes) * forecast steps
+                nodes = topo["num_1d_nodes"] + topo["num_2d_nodes"]
+                items = nodes * FORECAST_STEPS
+                mean_total_s = float(np.mean(r["times_total"]))
+                rec.set_throughput(f"{key}_rollout", items=items, mean_s=mean_total_s)
+
+            # ---- batch sensitivity sweep (wider grid) ----
+            print("\n\n" + "=" * 70)
+            print(f"  Batch sensitivity sweep — {_dev}")
+            print("=" * 70)
+            _sweep_topo = MODEL_TOPOLOGIES["model_1"]
+            _sweep_nodes = _sweep_topo["num_1d_nodes"] + _sweep_topo["num_2d_nodes"]
+            _sweep_batches = [1, 2, 4] if _is_cpu else [1, 2, 4, 8, 16]
+            _sweep_reps = 3 if _is_cpu else 5
+            for b in _sweep_batches:
+                reset_gpu_peak()
+                try:
+                    br = run_benchmark(
+                        "model_1",
+                        _sweep_topo,
+                        rec=None,
+                        batch_size=b,
+                        n_timed=_sweep_reps,
+                    )
+                    rec.add_batch_point(
+                        config=f"batch={b}",
+                        times=br["times_total"],
+                        items=_sweep_nodes * FORECAST_STEPS * b,
+                        gpu_peak_mb=(None if _is_cpu else gpu_peak_alloc_mb()),
+                    )
+                except Exception as e:
+                    print(f"  [batch={b}] skipped due to error: {e}")
+
+        # ---- Summary table (this device) ----
+        print("\n\n" + "=" * 70)
+        print(f"  SUMMARY — Inference Time Comparison ({_dev})")
+        print("=" * 70)
         print(
-            f"  {r['model']:<12} "
-            f"{r['full_ms_mean']:>12.2f} ms  "
-            f"{r['1d_readout_ms']:>14.3f} ms  "
-            f"{r['2d_readout_ms']:>14.3f} ms"
+            f"  {'Model':<12} {'Full fwd (ms)':>16} {'1D readout (ms)':>18} {'2D readout (ms)':>18}"
         )
-    print("=" * 70)
+        print(f"  {'-' * 12} {'-' * 16} {'-' * 18} {'-' * 18}")
+        for r in results:
+            print(
+                f"  {r['model']:<12} "
+                f"{r['full_ms_mean']:>12.2f} ms  "
+                f"{r['1d_readout_ms']:>14.3f} ms  "
+                f"{r['2d_readout_ms']:>14.3f} ms"
+            )
+        print("=" * 70)
+
     print("\nNote: '1D readout' and '2D readout' are the host-side numpy copy")
     print("      costs for each output tensor, measured after the forward pass.")
     print("      They do NOT include the LSTM computation itself.\n")

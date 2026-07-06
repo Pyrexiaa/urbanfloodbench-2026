@@ -24,7 +24,9 @@ from torch_geometric.nn import HeteroConv, GATv2Conv, TransformerConv, SAGEConv
 from typing import Optional
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root: shared inference_metrics_util.py
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)  # repo root: shared inference_metrics_util.py
 from inference_metrics_util import MetricsRecorder, reset_gpu_peak, gpu_peak_alloc_mb
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -602,211 +604,237 @@ def main():
         default=50,
         help="Number of timed forward passes (default: 50)",
     )
+    parser.add_argument(
+        "--cpu-n-runs",
+        type=int,
+        default=10,
+        help="Timed forward passes on the (slower) CPU pass (default: 10)",
+    )
     args = parser.parse_args()
 
-    # ── Device selection ──────────────────────────────────────────────────────
+    # ── Device selection: benchmark GPU (if present) AND CPU into one JSON ──────
+    rec = MetricsRecorder("4th_solution", "PyTorch + torch_geometric")
     if args.device == "auto":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        devices = rec.devices_to_run()
     else:
-        device = torch.device(args.device)
+        devices = [torch.device(args.device)]
 
     print("=" * 65)
-    print("  HeteroFloodGNN  —  Inference Time Benchmark")
-    print("=" * 65)
-    print(
-        f"  Device  : {device}"
-        + (f"  ({torch.cuda.get_device_name(device)})" if device.type == "cuda" else "")
-    )
-    print(f"  Warmup  : {args.n_warmup} runs")
-    print(f"  Timed   : {args.n_runs} runs")
+    print("  HeteroFloodGNN  —  Inference Time Benchmark (CPU + GPU)")
     print("=" * 65)
 
-    rec = MetricsRecorder("4th_solution", "PyTorch + torch_geometric", device)
+    for device in devices:
+        rec.set_device(device)
+        is_cpu = device.type == "cpu"
+        n_runs = args.cpu_n_runs if is_cpu else args.n_runs
+        n_warmup = min(args.n_warmup, 3) if is_cpu else args.n_warmup
+        batch_sizes = (1, 2, 4, 8) if is_cpu else (1, 2, 4, 8, 16, 32)
 
-    results = {}
-
-    for model_id, spec in MODEL_SPECS.items():
-        in_1d, in_2d = compute_in_channels(spec["wl_prev_steps"])
-
+        print(f"\n{'#' * 65}")
         print(
-            f"\n  [Model {model_id}]  "
-            f"n_1d={spec['n_1d']:>4d}  n_2d={spec['n_2d']:>5d}  "
-            f"hidden={spec['hidden_dim']}  wl_prev={spec['wl_prev_steps']}"
+            f"#  DEVICE: {device}"
+            + (
+                f"  ({torch.cuda.get_device_name(device)})"
+                if device.type == "cuda"
+                else ""
+            )
         )
-        print(f"            in_1d={in_1d}  in_2d={in_2d}")
-        print()
+        print(f"#  Warmup: {n_warmup}   Timed: {n_runs}")
+        print("#" * 65)
 
-        # Build model
-        model = build_model(spec, device)
-        n_params = sum(p.numel() for p in model.parameters())
-        print(f"  Parameters: {n_params:,}")
+        results = {}
 
-        # Build synthetic input (timed as the preprocessing phase)
-        with rec.phase("preprocessing"):
-            x_dict, edge_index_dict, edge_attr_dict = make_random_graph(
+        for model_id, spec in MODEL_SPECS.items():
+            in_1d, in_2d = compute_in_channels(spec["wl_prev_steps"])
+
+            print(
+                f"\n  [Model {model_id}]  "
+                f"n_1d={spec['n_1d']:>4d}  n_2d={spec['n_2d']:>5d}  "
+                f"hidden={spec['hidden_dim']}  wl_prev={spec['wl_prev_steps']}"
+            )
+            print(f"            in_1d={in_1d}  in_2d={in_2d}")
+            print()
+
+            # Build model
+            model = build_model(spec, device)
+            n_params = sum(p.numel() for p in model.parameters())
+            print(f"  Parameters: {n_params:,}")
+
+            # Build synthetic input (timed as the preprocessing phase)
+            with rec.phase("preprocessing"):
+                x_dict, edge_index_dict, edge_attr_dict = make_random_graph(
+                    n_1d=spec["n_1d"],
+                    n_2d=spec["n_2d"],
+                    n_edges_1d=spec["n_edges_1d"],
+                    n_edges_2d=spec["n_edges_2d"],
+                    n_coupling=spec["n_coupling"],
+                    in_1d=in_1d,
+                    in_2d=in_2d,
+                    edge_dim_1d=EDGE_DIM_1D if USE_EDGE_FEATURES else 0,
+                    device=device,
+                )
+
+            # ── Metrics: model info ────────────────────────────────────────────
+            n_params_rec = rec.count_params(model)
+            rec.set_model(
+                f"Model {model_id}",
+                n_params=n_params_rec,
+                size_mb=(n_params_rec * 4 / 1e6) if n_params_rec is not None else None,
                 n_1d=spec["n_1d"],
                 n_2d=spec["n_2d"],
-                n_edges_1d=spec["n_edges_1d"],
-                n_edges_2d=spec["n_edges_2d"],
-                n_coupling=spec["n_coupling"],
-                in_1d=in_1d,
-                in_2d=in_2d,
-                edge_dim_1d=EDGE_DIM_1D if USE_EDGE_FEATURES else 0,
+                hidden_dim=spec["hidden_dim"],
+            )
+
+            out, times = measure_inference(
+                model,
+                x_dict,
+                edge_index_dict,
+                edge_attr_dict,
                 device=device,
+                n_warmup=n_warmup,
+                n_runs=n_runs,
             )
 
-        # ── Metrics: model info ────────────────────────────────────────────
-        n_params_rec = rec.count_params(model)
-        rec.set_model(
-            f"Model {model_id}",
-            n_params=n_params_rec,
-            size_mb=(n_params_rec * 4 / 1e6) if n_params_rec is not None else None,
-            n_1d=spec["n_1d"],
-            n_2d=spec["n_2d"],
-            hidden_dim=spec["hidden_dim"],
-        )
+            mean_ms = times.mean()
+            std_ms = times.std()
+            min_ms = times.min()
+            max_ms = times.max()
+            p95_ms = np.percentile(times, 95)
 
-        out, times = measure_inference(
-            model,
-            x_dict,
-            edge_index_dict,
-            edge_attr_dict,
-            device=device,
-            n_warmup=args.n_warmup,
-            n_runs=args.n_runs,
-        )
+            # Output shapes: [n_nodes, temporal_bundle_k] or [n_nodes] if k==1
+            shape_1d = tuple(out["1d"].shape)
+            shape_2d = tuple(out["2d"].shape)
 
-        mean_ms = times.mean()
-        std_ms = times.std()
-        min_ms = times.min()
-        max_ms = times.max()
-        p95_ms = np.percentile(times, 95)
+            results[model_id] = {
+                "mean_ms": mean_ms,
+                "std_ms": std_ms,
+                "min_ms": min_ms,
+                "max_ms": max_ms,
+                "p95_ms": p95_ms,
+                "shape_1d": shape_1d,
+                "shape_2d": shape_2d,
+            }
 
-        # Output shapes: [n_nodes, temporal_bundle_k] or [n_nodes] if k==1
-        shape_1d = tuple(out["1d"].shape)
-        shape_2d = tuple(out["2d"].shape)
+            print(f"\n  Output  →  1D shape: {shape_1d}   2D shape: {shape_2d}")
+            print()
+            print("  ┌─────────────────────────────────────────┐")
+            print("  │  Full forward pass (1D + 2D combined)   │")
+            print(f"  │  Mean  : {mean_ms:>8.3f} ms              │")
+            print(f"  │  Std   : {std_ms:>8.3f} ms              │")
+            print(f"  │  Min   : {min_ms:>8.3f} ms              │")
+            print(f"  │  Max   : {max_ms:>8.3f} ms              │")
+            print(f"  │  p95   : {p95_ms:>8.3f} ms              │")
+            print("  └─────────────────────────────────────────┘")
 
-        results[model_id] = {
-            "mean_ms": mean_ms,
-            "std_ms": std_ms,
-            "min_ms": min_ms,
-            "max_ms": max_ms,
-            "p95_ms": p95_ms,
-            "shape_1d": shape_1d,
-            "shape_2d": shape_2d,
-        }
+            # Per-head timing estimate (proportional to node count)
+            total_nodes = spec["n_1d"] + spec["n_2d"]
+            frac_1d = spec["n_1d"] / total_nodes
+            frac_2d = spec["n_2d"] / total_nodes
+            est_1d_ms = mean_ms * frac_1d
+            est_2d_ms = mean_ms * frac_2d
 
-        print(f"\n  Output  →  1D shape: {shape_1d}   2D shape: {shape_2d}")
+            print()
+            print("  Estimated per-head inference time (proportional to node count):")
+            print(
+                f"    1D nodes ({spec['n_1d']:>4d} / {total_nodes} = {frac_1d * 100:.1f}%)  →  "
+                f"~{est_1d_ms:.4f} ms"
+            )
+            print(
+                f"    2D nodes ({spec['n_2d']:>5d} / {total_nodes} = {frac_2d * 100:.1f}%)  →  "
+                f"~{est_2d_ms:.4f} ms"
+            )
+
+            results[model_id]["est_1d_ms"] = est_1d_ms
+            results[model_id]["est_2d_ms"] = est_2d_ms
+
+            # ── Metrics: timing / throughput / phase / batch sensitivity ───────
+            times_s = [float(t) / 1000.0 for t in times]  # ms -> seconds
+            total_nodes = spec["n_1d"] + spec["n_2d"]
+            rec.set_timing(f"m{model_id}_single_step", times_s)
+            rec.set_throughput(
+                f"m{model_id}", items=total_nodes, mean_s=float(mean_ms) / 1000.0
+            )
+
+            # One representative forward pass timed as the "inference" phase.
+            with rec.phase("inference"):
+                with torch.no_grad():
+                    _ = model(x_dict, edge_index_dict, edge_attr_dict)
+
+            # Batch sensitivity: replicate the graph B times and time each config.
+            for b in batch_sizes:
+                xb, eib, eab = batch_graph(
+                    x_dict,
+                    edge_index_dict,
+                    edge_attr_dict,
+                    spec["n_1d"],
+                    spec["n_2d"],
+                    b,
+                )
+                reset_gpu_peak()
+                _, times_b = measure_inference(
+                    model,
+                    xb,
+                    eib,
+                    eab,
+                    device=device,
+                    n_warmup=max(1, n_warmup // 2),
+                    n_runs=n_runs,
+                )
+                rec.add_batch_point(
+                    config=f"m{model_id}_batch={b}",
+                    times=[float(t) / 1000.0 for t in times_b],
+                    items=total_nodes * b,
+                    gpu_peak_mb=gpu_peak_alloc_mb(),
+                )
+
+            del model
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+
+        # ── Summary table ─────────────────────────────────────────────────────────
         print()
-        print("  ┌─────────────────────────────────────────┐")
-        print("  │  Full forward pass (1D + 2D combined)   │")
-        print(f"  │  Mean  : {mean_ms:>8.3f} ms              │")
-        print(f"  │  Std   : {std_ms:>8.3f} ms              │")
-        print(f"  │  Min   : {min_ms:>8.3f} ms              │")
-        print(f"  │  Max   : {max_ms:>8.3f} ms              │")
-        print(f"  │  p95   : {p95_ms:>8.3f} ms              │")
-        print("  └─────────────────────────────────────────┘")
+        print("=" * 65)
+        print(f"  SUMMARY  —  Inference Times (mean ± std over {n_runs} runs)")
+        print("=" * 65)
+        print(f"  {'Variant':<30}  {'Mean (ms)':>10}  {'Std (ms)':>9}  {'p95 (ms)':>9}")
+        print("  " + "-" * 61)
 
-        # Per-head timing estimate (proportional to node count)
-        total_nodes = spec["n_1d"] + spec["n_2d"]
-        frac_1d = spec["n_1d"] / total_nodes
-        frac_2d = spec["n_2d"] / total_nodes
-        est_1d_ms = mean_ms * frac_1d
-        est_2d_ms = mean_ms * frac_2d
+        rows = [
+            ("Model 1  —  1D nodes", 1, "est_1d_ms"),
+            ("Model 1  —  2D nodes", 1, "est_2d_ms"),
+            ("Model 2  —  1D nodes", 2, "est_1d_ms"),
+            ("Model 2  —  2D nodes", 2, "est_2d_ms"),
+        ]
+        for label, mid, key in rows:
+            r = results[mid]
+            mean = r[key]
+            # std and p95 scaled by same fraction
+            frac = mean / r["mean_ms"]
+            std = r["std_ms"] * frac
+            p95 = r["p95_ms"] * frac
+            print(f"  {label:<30}  {mean:>10.4f}  {std:>9.4f}  {p95:>9.4f}")
 
         print()
-        print("  Estimated per-head inference time (proportional to node count):")
+        print("  Full forward pass (1D + 2D together):")
         print(
-            f"    1D nodes ({spec['n_1d']:>4d} / {total_nodes} = {frac_1d * 100:.1f}%)  →  "
-            f"~{est_1d_ms:.4f} ms"
+            f"  {'Model 1  —  full pass':<30}  "
+            f"{results[1]['mean_ms']:>10.3f}  "
+            f"{results[1]['std_ms']:>9.3f}  "
+            f"{results[1]['p95_ms']:>9.3f}"
         )
         print(
-            f"    2D nodes ({spec['n_2d']:>5d} / {total_nodes} = {frac_2d * 100:.1f}%)  →  "
-            f"~{est_2d_ms:.4f} ms"
+            f"  {'Model 2  —  full pass':<30}  "
+            f"{results[2]['mean_ms']:>10.3f}  "
+            f"{results[2]['std_ms']:>9.3f}  "
+            f"{results[2]['p95_ms']:>9.3f}"
         )
-
-        results[model_id]["est_1d_ms"] = est_1d_ms
-        results[model_id]["est_2d_ms"] = est_2d_ms
-
-        # ── Metrics: timing / throughput / phase / batch sensitivity ───────
-        times_s = [float(t) / 1000.0 for t in times]  # ms -> seconds
-        total_nodes = spec["n_1d"] + spec["n_2d"]
-        rec.set_timing(f"m{model_id}_single_step", times_s)
-        rec.set_throughput(
-            f"m{model_id}", items=total_nodes, mean_s=float(mean_ms) / 1000.0
-        )
-
-        # One representative forward pass timed as the "inference" phase.
-        with rec.phase("inference"):
-            with torch.no_grad():
-                _ = model(x_dict, edge_index_dict, edge_attr_dict)
-
-        # Batch sensitivity: replicate the graph B times and time each config.
-        for b in (1, 2, 4, 8):
-            xb, eib, eab = batch_graph(
-                x_dict, edge_index_dict, edge_attr_dict,
-                spec["n_1d"], spec["n_2d"], b,
-            )
-            reset_gpu_peak()
-            _, times_b = measure_inference(
-                model, xb, eib, eab, device=device,
-                n_warmup=max(1, args.n_warmup // 2), n_runs=args.n_runs,
-            )
-            rec.add_batch_point(
-                config=f"m{model_id}_batch={b}",
-                mean_s=float(times_b.mean()) / 1000.0,
-                items=total_nodes * b,
-                gpu_peak_mb=gpu_peak_alloc_mb(),
-            )
-
-        del model
-        if device.type == "cuda":
-            torch.cuda.empty_cache()
-
-    # ── Summary table ─────────────────────────────────────────────────────────
-    print()
-    print("=" * 65)
-    print(f"  SUMMARY  —  Inference Times (mean ± std over {args.n_runs} runs)")
-    print("=" * 65)
-    print(f"  {'Variant':<30}  {'Mean (ms)':>10}  {'Std (ms)':>9}  {'p95 (ms)':>9}")
-    print("  " + "-" * 61)
-
-    rows = [
-        ("Model 1  —  1D nodes", 1, "est_1d_ms"),
-        ("Model 1  —  2D nodes", 1, "est_2d_ms"),
-        ("Model 2  —  1D nodes", 2, "est_1d_ms"),
-        ("Model 2  —  2D nodes", 2, "est_2d_ms"),
-    ]
-    for label, mid, key in rows:
-        r = results[mid]
-        mean = r[key]
-        # std and p95 scaled by same fraction
-        frac = mean / r["mean_ms"]
-        std = r["std_ms"] * frac
-        p95 = r["p95_ms"] * frac
-        print(f"  {label:<30}  {mean:>10.4f}  {std:>9.4f}  {p95:>9.4f}")
-
-    print()
-    print("  Full forward pass (1D + 2D together):")
-    print(
-        f"  {'Model 1  —  full pass':<30}  "
-        f"{results[1]['mean_ms']:>10.3f}  "
-        f"{results[1]['std_ms']:>9.3f}  "
-        f"{results[1]['p95_ms']:>9.3f}"
-    )
-    print(
-        f"  {'Model 2  —  full pass':<30}  "
-        f"{results[2]['mean_ms']:>10.3f}  "
-        f"{results[2]['std_ms']:>9.3f}  "
-        f"{results[2]['p95_ms']:>9.3f}"
-    )
-    print("=" * 65)
-    print()
-    print("  NOTE: 1D/2D per-head times are proportional estimates.")
-    print("        The GNN processes both node types in a single fused")
-    print("        forward pass; they cannot be isolated without")
-    print("        architectural changes.")
-    print("=" * 65)
+        print("=" * 65)
+        print()
+        print("  NOTE: 1D/2D per-head times are proportional estimates.")
+        print("        The GNN processes both node types in a single fused")
+        print("        forward pass; they cannot be isolated without")
+        print("        architectural changes.")
+        print("=" * 65)
 
     rec.save(folder=os.path.dirname(os.path.abspath(__file__)))
 

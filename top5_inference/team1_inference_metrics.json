@@ -1,0 +1,112 @@
+{
+  "solution": "1st_solution",
+  "framework": "JAX/Keras",
+  "device": "cuda:0",
+  "timestamp": "2026-07-07T02:10:27",
+  "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
+  "python": "3.11.15",
+  "hardware": {
+    "jax": "0.10.2",
+    "jax_devices": [
+      "cuda:0"
+    ]
+  },
+  "model": {
+    "Model 1": {
+      "n_params": 1486473,
+      "size_mb": 5.945892
+    },
+    "Model 2": {
+      "n_params": 1870477,
+      "size_mb": 7.481908
+    }
+  },
+  "phases": {
+    "preprocessing": {
+      "wall_s": 48.41473845700966,
+      "cpu_s": 48.438640831999976,
+      "gpu_peak_alloc_mb": 20296.511232
+    }
+  },
+  "timing": {
+    "m1_total": {
+      "runs": 50,
+      "mean_s": 1.622591750160791,
+      "std_s": 0.060972605517634386,
+      "median_s": 1.6295107654877938,
+      "min_s": 1.497822133009322,
+      "max_s": 1.8188249549712054
+    },
+    "m1_1d": {
+      "runs": 50,
+      "mean_s": 0.0004232080350629985,
+      "std_s": 5.7481211104950944e-05,
+      "median_s": 0.0004249654884915799,
+      "min_s": 0.0003139059990644455,
+      "max_s": 0.00055427395273
+    },
+    "m1_2d": {
+      "runs": 50,
+      "mean_s": 0.00036227948032319546,
+      "std_s": 5.190206529587425e-05,
+      "median_s": 0.0003666010161396116,
+      "min_s": 0.00023385795066133142,
+      "max_s": 0.0004585550050251186
+    },
+    "m2_total": {
+      "runs": 50,
+      "mean_s": 1.9391065211803653,
+      "std_s": 0.038640774134311745,
+      "median_s": 1.9350395560031757,
+      "min_s": 1.8628955199965276,
+      "max_s": 2.099174414004665
+    },
+    "m2_1d": {
+      "runs": 50,
+      "mean_s": 0.0004778497223742306,
+      "std_s": 0.0003269734728526041,
+      "median_s": 0.00043812100193463266,
+      "min_s": 0.0002773270243778825,
+      "max_s": 0.002726031991187483
+    },
+    "m2_2d": {
+      "runs": 50,
+      "mean_s": 0.00036873342003673315,
+      "std_s": 5.7154116613016046e-05,
+      "median_s": 0.00036107099731452763,
+      "min_s": 0.00028402695897966623,
+      "max_s": 0.0005155949620530009
+    }
+  },
+  "throughput": {
+    "m1_rollout": {
+      "items": 3733,
+      "mean_s": 1.622591750160791,
+      "items_per_s": 2300.640317954333
+    },
+    "m2_rollout": {
+      "items": 4497,
+      "mean_s": 1.9391065211803653,
+      "items_per_s": 2319.1093170387585
+    }
+  },
+  "batch_sensitivity": [
+    {
+      "config": "batch=1",
+      "mean_s": 1.7098083151970058,
+      "items": 3733,
+      "items_per_s": 2183.285674084396,
+      "gpu_peak_alloc_mb": 29020.834048
+    }
+  ],
+  "memory": {
+    "peak_cpu_rss_mb": 86139.588,
+    "gpu_peak_alloc_mb": 30214.245376
+  },
+  "external_reference_required": {
+    "hecras_runtime_s": null,
+    "speedup_vs_hecras": null,
+    "training_cost_gpu_hours": null,
+    "_note": "Not derivable from dummy inference. Fill hecras_runtime_s from the reference HEC-RAS simulation, speedup_vs_hecras = hecras_runtime_s / inference wall time, and training_cost_gpu_hours from training logs/estimates."
+  }
+}

@@ -16,10 +16,16 @@
 
 source ~/anaconda3/etc/profile.d/conda.sh
 
-# Resolve the main folder (this script's directory) so paths work regardless
-# of where sbatch is launched from.
-MAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$MAIN_DIR"
+# Resolve the main folder so paths work regardless of how the script is
+# launched. Under sbatch the script is copied to Slurm's spool dir, so
+# ${BASH_SOURCE[0]} is useless there — prefer $SLURM_SUBMIT_DIR (the dir you
+# ran sbatch from) and fall back to the script's own dir for plain `bash` runs.
+if [ -n "$SLURM_SUBMIT_DIR" ]; then
+  MAIN_DIR="$SLURM_SUBMIT_DIR"
+else
+  MAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+cd "$MAIN_DIR" || { echo "!!! Cannot cd to $MAIN_DIR"; exit 1; }
 mkdir -p logs
 
 # Solutions in rank order.

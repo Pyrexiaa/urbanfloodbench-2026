@@ -1,0 +1,107 @@
+{
+  "solution": "2nd_solution",
+  "framework": "PyTorch",
+  "device": "cuda",
+  "timestamp": "2026-07-06T22:03:32",
+  "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
+  "python": "3.11.15",
+  "hardware": {
+    "torch": "2.11.0+cu128",
+    "gpu_name": "NVIDIA A100-PCIE-40GB",
+    "gpu_total_mem_mb": 42405.855232,
+    "cuda": "12.8"
+  },
+  "model": {
+    "Model 1": {
+      "n_params": 3025155,
+      "size_mb": 12.10062
+    },
+    "Model 2": {
+      "n_params": 4358883,
+      "size_mb": 17.435532
+    }
+  },
+  "phases": {
+    "preprocessing": {
+      "wall_s": 0.8339985529892147,
+      "cpu_s": 0.5300667949999998,
+      "gpu_peak_alloc_mb": 10.925056
+    },
+    "inference": {
+      "wall_s": 0.11445764498785138,
+      "cpu_s": 0.11449935999999994,
+      "gpu_peak_alloc_mb": 196.527104
+    }
+  },
+  "timing": {
+    "m1_forward": {
+      "runs": 50,
+      "mean_s": 0.11510973612079396,
+      "std_s": 0.001667162795103825,
+      "median_s": 0.11458474100800231,
+      "min_s": 0.1143335800152272,
+      "max_s": 0.1218601040309295
+    },
+    "m2_forward": {
+      "runs": 50,
+      "mean_s": 0.17681280179764144,
+      "std_s": 0.0007443329272122374,
+      "median_s": 0.17689277947647497,
+      "min_s": 0.175381438981276,
+      "max_s": 0.17867717100307345
+    }
+  },
+  "throughput": {
+    "m1": {
+      "items": 335970,
+      "mean_s": 0.11510973612079396,
+      "items_per_s": 2918693.1646462944
+    },
+    "m2": {
+      "items": 404730,
+      "mean_s": 0.17681280179764144,
+      "items_per_s": 2289031.0875974074
+    }
+  },
+  "batch_sensitivity": [
+    {
+      "config": "steps=10",
+      "mean_s": 0.01991100568207912,
+      "items": 37330,
+      "items_per_s": 1874842.5165484648,
+      "gpu_peak_alloc_mb": 196.527104
+    },
+    {
+      "config": "steps=30",
+      "mean_s": 0.04349102076375857,
+      "items": 111990,
+      "items_per_s": 2575014.2910722895,
+      "gpu_peak_alloc_mb": 196.527104
+    },
+    {
+      "config": "steps=60",
+      "mean_s": 0.07871673443703912,
+      "items": 223980,
+      "items_per_s": 2845392.426424249,
+      "gpu_peak_alloc_mb": 196.527104
+    },
+    {
+      "config": "steps=90",
+      "mean_s": 0.11419903596164659,
+      "items": 335970,
+      "items_per_s": 2941968.7930888887,
+      "gpu_peak_alloc_mb": 196.527104
+    }
+  ],
+  "memory": {
+    "peak_cpu_rss_mb": 1352.34,
+    "gpu_max_allocated_mb": 196.527104,
+    "gpu_max_reserved_mb": 375.390208
+  },
+  "external_reference_required": {
+    "hecras_runtime_s": null,
+    "speedup_vs_hecras": null,
+    "training_cost_gpu_hours": null,
+    "_note": "Not derivable from dummy inference. Fill hecras_runtime_s from the reference HEC-RAS simulation, speedup_vs_hecras = hecras_runtime_s / inference wall time, and training_cost_gpu_hours from training logs/estimates."
+  }
+}

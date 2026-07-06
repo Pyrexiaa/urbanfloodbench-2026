@@ -38,13 +38,15 @@ import os
 import sys
 import time
 import warnings
-from typing import List, Tuple
+from typing import Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root: shared inference_metrics_util.py
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)  # repo root: shared inference_metrics_util.py
 from inference_metrics_util import MetricsRecorder, reset_gpu_peak, gpu_peak_alloc_mb
 
 # ---------------------------------------------------------------------------
@@ -890,378 +892,189 @@ def main():
 
     N_EV = args.n_events
     N_T = args.n_timesteps
-    M1_N1 = args.m1_n_nodes_1d  # Model 1 – 1D nodes  (default 17)
-    M1_N2 = args.m1_n_nodes_2d  # Model 1 – 2D nodes  (default 3716)
-    M2_N1 = args.m2_n_nodes_1d  # Model 2 – 1D nodes  (default 198)
-    M2_N2 = args.m2_n_nodes_2d  # Model 2 – 2D nodes  (default 4299)
+    M1_N1 = args.m1_n_nodes_1d
+    M1_N2 = args.m1_n_nodes_2d
+    M2_N1 = args.m2_n_nodes_1d
+    M2_N2 = args.m2_n_nodes_2d
     N_RUNS = args.n_runs
-    N_ENS = args.n_ensemble
+
+    # One recorder; PI-GNN is timed on GPU (if present) AND CPU into one JSON.
+    rec = MetricsRecorder("5th_solution", "PyTorch (Ridge+LightGBM+PI-GNN)")
+    if torch.cuda.is_available():
+        devices = [torch.device("cuda"), torch.device("cpu")]
+    else:
+        devices = [torch.device("cpu")]
+    rec.set_device(devices[0])  # preprocessing lands in the first section
 
     section("Environment")
-    device = get_device()
-
-    # --- inference metrics recorder (additive; does not alter behavior) ------
-    rec = MetricsRecorder(
-        "5th_solution", "PyTorch (Ridge+LightGBM+PI-GNN)", device
-    )
-    print(f"  Events          : {N_EV}")
-    print(f"  Timesteps       : {N_T}")
-    print(f"  Model 1 – 1D nodes : {M1_N1}")
-    print(f"  Model 1 – 2D nodes : {M1_N2}")
-    print(f"  Model 2 – 1D nodes : {M2_N1}")
-    print(f"  Model 2 – 2D nodes : {M2_N2}")
-    print(f"  Ensemble size   : {N_ENS}")
-    print(f"  Timing runs     : {N_RUNS}")
+    for d in devices:
+        print(f"  will benchmark on: {d}")
 
     # -----------------------------------------------------------------------
     section("Building synthetic data")
     # -----------------------------------------------------------------------
     with rec.phase("preprocessing"):
-        # Model 1 event sets
         ev_m1_1d = make_events_1d(N_EV, N_T, M1_N1, rng)
         ev_m1_2d = make_events_2d(N_EV, N_T, M1_N2, rng)
-        # Model 2 event sets
         ev_m2_1d = make_events_1d(N_EV, N_T, M2_N1, rng)
         ev_m2_2d = make_events_2d(N_EV, N_T, M2_N2, rng)
-    print(f"  M1 1D events : ({N_EV}, {N_T}, {M1_N1})")
-    print(f"  M1 2D events : ({N_EV}, {N_T}, {M1_N2})")
-    print(f"  M2 1D events : ({N_EV}, {N_T}, {M2_N1})")
-    print(f"  M2 2D events : ({N_EV}, {N_T}, {M2_N2})")
 
     # -----------------------------------------------------------------------
-    section("Building dummy LightGBM stubs (numpy tree traversal, no training)")
+    section("Building dummy LightGBM stubs + Ridge (single member)")
     # -----------------------------------------------------------------------
-    TRAIN_ROWS = 2_000  # kept for API compat – stub ignores this
-    lgbm_device = "cpu"  # stub is pure numpy; no native device needed
-    print("  LightGBM backend: numpy stub (avoids macOS OpenMP segfault)")
-    print(
-        "  Inference cost  : O(n_samples x n_estimators x depth) – same as real booster"
-    )
-
-    print(
-        "  [M1-1D] Building 3 anchor LGBM stubs ×",
-        N_ENS,
-        "ensemble members …",
-        end=" ",
-        flush=True,
-    )
-    m1_1d_anchors_list = []
-    for _ in range(N_ENS):
-        anchors = [
-            train_lgbm(50, m1_feat_dim(1), TRAIN_ROWS, 31, 20, rng, lgbm_device)
-            for _ in range(M1_N_ANCHORS)
-        ]
-        m1_1d_anchors_list.append(anchors)
-    print("done")
-
-    print(
-        "  [M1-2D] Building 3 anchor LGBM stubs ×",
-        N_ENS,
-        "ensemble members …",
-        end=" ",
-        flush=True,
-    )
-    m1_2d_anchors_list = []
-    for _ in range(N_ENS):
-        anchors = [
-            train_lgbm(50, m1_feat_dim(2), TRAIN_ROWS, 31, 20, rng, lgbm_device)
-            for _ in range(M1_N_ANCHORS)
-        ]
-        m1_2d_anchors_list.append(anchors)
-    print("done")
-
-    print(
-        "  [M2-2D] Building 3 anchor LGBM+PI stubs ×",
-        N_ENS,
-        "ensemble members …",
-        end=" ",
-        flush=True,
-    )
-    m2_2d_anchors_list = []
-    for _ in range(N_ENS):
-        anchors = [
-            train_lgbm(50, m2t_feat_dim(), TRAIN_ROWS, 31, 20, rng, lgbm_device)
-            for _ in range(M2T_N_ANCHORS)
-        ]
-        m2_2d_anchors_list.append(anchors)
-    print("done")
-
-    # Ridge coefficients (random, no training needed)
-    m1_1d_ridge_list = [make_ridge_coef(m1_feat_dim(1), rng) for _ in range(N_ENS)]
-    m1_2d_ridge_list = [make_ridge_coef(m1_feat_dim(2), rng) for _ in range(N_ENS)]
-    m2_2d_ridge_list = [make_ridge_coef(m2t_feat_dim(), rng) for _ in range(N_ENS)]
-
-    # Per-member blend weights λ (random ∈ [0.3, 0.7])
-    m1_1d_lambdas = rng.uniform(0.3, 0.7, size=N_ENS).tolist()
-    m1_2d_lambdas = rng.uniform(0.3, 0.7, size=N_ENS).tolist()
-    m2_2d_lambdas = rng.uniform(0.3, 0.7, size=N_ENS).tolist()
-
-    # -----------------------------------------------------------------------
-    section("Building GNN models (random weights)")
-    # -----------------------------------------------------------------------
-    # Model 2 GNN operates on M2_N1 nodes
-    edge_index_np_m2 = make_gnn_edge_index(M2_N1, rng)
-    gnn_fd = gnn_feat_dim()
-    print(f"  GNN feature dim  : {gnn_fd}")
-    print(f"  GNN layers       : {GNN_N_LAYERS}  (attn)")
-    print(f"  GNN d_model      : {GNN_D_MODEL}")
-    print(f"  GNN node count   : {M2_N1}  (Model 2 – 1D)")
-
-    gnn_models: List[PhysicsInformedGNN] = []
-    for i in range(N_ENS):
-        n_layers = GNN_N_LAYERS + (i % 2)  # vary slightly across members
-        g = PhysicsInformedGNN(
-            n_features=gnn_fd,
-            n_nodes=M2_N1,
-            edge_index_np=edge_index_np_m2,
-            d_model=GNN_D_MODEL,
-            n_layers=n_layers,
-            dropout=GNN_DROPOUT,
-            node_embed_dim=GNN_NODE_EMBED,
-            n_aux_targets=GNN_AUX_TARGETS,
-            layer_type=GNN_LAYER_TYPE,
-            attn_dropout=GNN_ATTN_DROPOUT,
-        )
-        g = g.to(device).eval()
-        gnn_models.append(g)
-    print(f"  Built {N_ENS} GNN members → device={device}")
-
-    # Record PI-GNN model info (Model 2 – 1D) from a representative member.
-    _gnn_params = rec.count_params(gnn_models[0])
-    rec.set_model(
-        "PI-GNN Model2 1D",
-        n_params=_gnn_params,
-        size_mb=(None if _gnn_params is None else _gnn_params * 4 / 1e6),
-        d_model=GNN_D_MODEL,
-        n_layers=GNN_N_LAYERS,
-        n_nodes=M2_N1,
-    )
-
-    # -----------------------------------------------------------------------
-    section("Warm-up pass (1 run, not timed)")
-    # -----------------------------------------------------------------------
-    infer_m1_1d(
-        [ev_m1_1d[0]], m1_1d_anchors_list[0], m1_1d_ridge_list[0], m1_1d_lambdas[0], rng
-    )
-    infer_m1_2d(
-        [ev_m1_2d[0]], m1_2d_anchors_list[0], m1_2d_ridge_list[0], m1_2d_lambdas[0], rng
-    )
-    infer_gnn_1d([ev_m2_1d[0]], gnn_models[0], device, M2_N1, GNN_GRAPH_BATCH_SIZE, rng)
-    infer_m2_2d(
-        [ev_m2_2d[0]], m2_2d_anchors_list[0], m2_2d_ridge_list[0], m2_2d_lambdas[0], rng
-    )
-    print("  Warm-up complete")
-
-    # -----------------------------------------------------------------------
-    section("Timing individual model inference (single member)")
-    # -----------------------------------------------------------------------
-    print(f"\n  Timing over {N_RUNS} runs, reporting best and mean …\n")
-
-    best_m1_1d, mean_m1_1d, std_m1_1d = timer(
-        lambda: infer_m1_1d(
-            ev_m1_1d, m1_1d_anchors_list[0], m1_1d_ridge_list[0], m1_1d_lambdas[0], rng
-        ),
-        N_RUNS,
-    )
-    print(
-        f"  Model 1 – 1D  (Ridge+LightGBM Rain-3, {M1_N1:>4} nodes):  best={best_m1_1d * 1e3:8.1f} ms  mean={mean_m1_1d * 1e3:8.1f} ms  std={std_m1_1d * 1e3:8.1f} ms"
-    )
-    rec.set_timing("Model1-1D Ridge+LightGBM", timer.last_times)
-    rec.set_throughput(
-        "Model1-1D Ridge+LightGBM",
-        items=N_EV * M1_N1 * max(0, N_T - M1_START_T),
-        mean_s=mean_m1_1d,
-    )
-
-    best_m1_2d, mean_m1_2d, std_m1_2d = timer(
-        lambda: infer_m1_2d(
-            ev_m1_2d, m1_2d_anchors_list[0], m1_2d_ridge_list[0], m1_2d_lambdas[0], rng
-        ),
-        N_RUNS,
-    )
-    print(
-        f"  Model 1 – 2D  (Ridge+LightGBM Rain-3, {M1_N2:>4} nodes):  best={best_m1_2d * 1e3:8.1f} ms  mean={mean_m1_2d * 1e3:8.1f} ms  std={std_m1_2d * 1e3:8.1f} ms"
-    )
-    rec.set_timing("Model1-2D Ridge+LightGBM", timer.last_times)
-    rec.set_throughput(
-        "Model1-2D Ridge+LightGBM",
-        items=N_EV * M1_N2 * max(0, N_T - M1_START_T),
-        mean_s=mean_m1_2d,
-    )
-
-    best_m2_1d, mean_m2_1d, std_m2_1d = timer(
-        lambda: infer_gnn_1d(
-            ev_m2_1d, gnn_models[0], device, M2_N1, GNN_GRAPH_BATCH_SIZE, rng
-        ),
-        N_RUNS,
-    )
-    print(
-        f"  Model 2 – 1D  (Physics-Informed GNN,   {M2_N1:>4} nodes):  best={best_m2_1d * 1e3:8.1f} ms  mean={mean_m2_1d * 1e3:8.1f} ms  std={std_m2_1d * 1e3:8.1f} ms"
-    )
-    rec.set_timing("Model2-1D PI-GNN", timer.last_times)
-    rec.set_throughput(
-        "Model2-1D PI-GNN",
-        items=N_EV * M2_N1 * max(0, N_T - GNN_START_T),
-        mean_s=mean_m2_1d,
-    )
-
-    best_m2_2d, mean_m2_2d, std_m2_2d = timer(
-        lambda: infer_m2_2d(
-            ev_m2_2d, m2_2d_anchors_list[0], m2_2d_ridge_list[0], m2_2d_lambdas[0], rng
-        ),
-        N_RUNS,
-    )
-    print(
-        f"  Model 2 – 2D  (Ridge+LGBM+PI feats,   {M2_N2:>4} nodes):  best={best_m2_2d * 1e3:8.1f} ms  mean={mean_m2_2d * 1e3:8.1f} ms  std={std_m2_2d * 1e3:8.1f} ms"
-    )
-    rec.set_timing("Model2-2D Ridge+LightGBM+PI", timer.last_times)
-    rec.set_throughput(
-        "Model2-2D Ridge+LightGBM+PI",
-        items=N_EV * M2_N2 * max(0, N_T - M2T_START_T),
-        mean_s=mean_m2_2d,
-    )
-
-    # -----------------------------------------------------------------------
-    section(f"Timing ensemble inference ({N_ENS} members, nodewise blend)")
-    # -----------------------------------------------------------------------
-    print(f"  Each ensemble call runs all {N_ENS} members then blends.\n")
-
-    best_ens_m1_1d, mean_ens_m1_1d, std_ens_m1_1d = timer(
-        lambda: infer_ensemble_m1_1d(
-            ev_m1_1d, m1_1d_anchors_list, m1_1d_ridge_list, m1_1d_lambdas, N_ENS, rng
-        ),
-        N_RUNS,
-    )
-    print(
-        f"  Ensemble M1-1D  ({M1_N1:>4} nodes, {N_ENS} members): best={best_ens_m1_1d * 1e3:8.1f} ms  mean={mean_ens_m1_1d * 1e3:8.1f} ms  std={std_ens_m1_1d * 1e3:8.1f} ms"
-    )
-
-    best_ens_m1_2d, mean_ens_m1_2d, std_ens_m1_2d = timer(
-        lambda: infer_ensemble_m1_2d(
-            ev_m1_2d, m1_2d_anchors_list, m1_2d_ridge_list, m1_2d_lambdas, N_ENS, rng
-        ),
-        N_RUNS,
-    )
-    print(
-        f"  Ensemble M1-2D  ({M1_N2:>4} nodes, {N_ENS} members): best={best_ens_m1_2d * 1e3:8.1f} ms  mean={mean_ens_m1_2d * 1e3:8.1f} ms  std={std_ens_m1_2d * 1e3:8.1f} ms"
-    )
-
-    best_ens_m2_1d, mean_ens_m2_1d, std_ens_m2_1d = timer(
-        lambda: infer_ensemble_m2_1d(
-            ev_m2_1d, gnn_models, N_ENS, device, M2_N1, GNN_GRAPH_BATCH_SIZE, rng
-        ),
-        N_RUNS,
-    )
-    print(
-        f"  Ensemble M2-1D  ({M2_N1:>4} nodes, {N_ENS} members): best={best_ens_m2_1d * 1e3:8.1f} ms  mean={mean_ens_m2_1d * 1e3:8.1f} ms  std={std_ens_m2_1d * 1e3:8.1f} ms"
-    )
-
-    best_ens_m2_2d, mean_ens_m2_2d, std_ens_m2_2d = timer(
-        lambda: infer_ensemble_m2_2d(
-            ev_m2_2d, m2_2d_anchors_list, m2_2d_ridge_list, m2_2d_lambdas, N_ENS, rng
-        ),
-        N_RUNS,
-    )
-    print(
-        f"  Ensemble M2-2D  ({M2_N2:>4} nodes, {N_ENS} members): best={best_ens_m2_2d * 1e3:8.1f} ms  mean={mean_ens_m2_2d * 1e3:8.1f} ms  std={std_ens_m2_2d * 1e3:8.1f} ms"
-    )
-
-    # -----------------------------------------------------------------------
-    section("Summary")
-    # -----------------------------------------------------------------------
-    print()
-    print(
-        f"  Events: {N_EV} × {N_T} timesteps  |  "
-        f"M1: {M1_N1} 1D nodes / {M1_N2} 2D nodes  |  "
-        f"M2: {M2_N1} 1D nodes / {M2_N2} 2D nodes"
-    )
-    print(f"  Device: {device}")
-    print()
-    print(f"  {'Scenario':<55}  {'Best (ms)':>10}  {'Mean (ms)':>10}  {'Std (ms)':>10}")
-    print(f"  {'-' * 55}  {'-' * 10}  {'-' * 10}  {'-' * 10}")
-    rows = [
-        (
-            f"Model 1 – 1D  (Ridge+LGBM Rain-3,  {M1_N1:>4} nodes)",
-            best_m1_1d,
-            mean_m1_1d,
-            std_m1_1d,
-        ),
-        (
-            f"Model 1 – 2D  (Ridge+LGBM Rain-3,  {M1_N2:>4} nodes)",
-            best_m1_2d,
-            mean_m1_2d,
-            std_m1_2d,
-        ),
-        (
-            f"Model 2 – 1D  (Physics-Inf. GNN,   {M2_N1:>4} nodes)",
-            best_m2_1d,
-            mean_m2_1d,
-            std_m2_1d,
-        ),
-        (
-            f"Model 2 – 2D  (Ridge+LGBM+PI,      {M2_N2:>4} nodes)",
-            best_m2_2d,
-            mean_m2_2d,
-            std_m2_2d,
-        ),
-        (
-            f"Ensemble M1-1D  ({M1_N1:>4} nodes, {N_ENS} members)",
-            best_ens_m1_1d,
-            mean_ens_m1_1d,
-            std_ens_m1_1d,
-        ),
-        (
-            f"Ensemble M1-2D  ({M1_N2:>4} nodes, {N_ENS} members)",
-            best_ens_m1_2d,
-            mean_ens_m1_2d,
-            std_ens_m1_2d,
-        ),
-        (
-            f"Ensemble M2-1D  ({M2_N1:>4} nodes, {N_ENS} members)",
-            best_ens_m2_1d,
-            mean_ens_m2_1d,
-            std_ens_m2_1d,
-        ),
-        (
-            f"Ensemble M2-2D  ({M2_N2:>4} nodes, {N_ENS} members)",
-            best_ens_m2_2d,
-            mean_ens_m2_2d,
-            std_ens_m2_2d,
-        ),
+    TRAIN_ROWS = 2_000
+    m1_1d_anchors = [
+        train_lgbm(50, m1_feat_dim(1), TRAIN_ROWS, 31, 20, rng)
+        for _ in range(M1_N_ANCHORS)
     ]
-    for name, b, m, s in rows:
-        print(f"  {name:<55}  {b * 1e3:>10.1f}  {m * 1e3:>10.1f}  {s * 1e3:>10.1f}")
-    print()
-    print("  Times are wall-clock seconds × 1000 (milliseconds).")
-    print("  'Best' = min across runs; 'Mean' = average across runs.")
-    print()
+    m1_2d_anchors = [
+        train_lgbm(50, m1_feat_dim(2), TRAIN_ROWS, 31, 20, rng)
+        for _ in range(M1_N_ANCHORS)
+    ]
+    m2_2d_anchors = [
+        train_lgbm(50, m2t_feat_dim(), TRAIN_ROWS, 31, 20, rng)
+        for _ in range(M2T_N_ANCHORS)
+    ]
+    m1_1d_ridge = make_ridge_coef(m1_feat_dim(1), rng)
+    m1_2d_ridge = make_ridge_coef(m1_feat_dim(2), rng)
+    m2_2d_ridge = make_ridge_coef(m2t_feat_dim(), rng)
+    m1_1d_lam = float(rng.uniform(0.3, 0.7))
+    m1_2d_lam = float(rng.uniform(0.3, 0.7))
+    m2_2d_lam = float(rng.uniform(0.3, 0.7))
 
     # -----------------------------------------------------------------------
-    # Batch sensitivity: sweep the number of synthetic events on the dominant
-    # neural component (PI-GNN, Model 2 – 1D).  Small reps to stay cheap.
+    # Tabular models (Ridge + LightGBM) are pure-numpy / CPU-only: their
+    # runtime is device-independent, so we time them ONCE and reuse the numbers
+    # in both the CPU and GPU sections.
     # -----------------------------------------------------------------------
-    section("Batch sensitivity sweep (PI-GNN, Model 2 – 1D)")
-    sweep_reps = max(1, min(3, N_RUNS))
-    for n in [5, 10, 20, 40]:
-        sweep_events = make_events_1d(n, N_T, M2_N1, rng)
-        # warm-up (not timed)
+    section("Timing tabular models (CPU numpy — device-independent)")
+    infer_m1_1d([ev_m1_1d[0]], m1_1d_anchors, m1_1d_ridge, m1_1d_lam, rng)  # warmup
+    timer(
+        lambda: infer_m1_1d(ev_m1_1d, m1_1d_anchors, m1_1d_ridge, m1_1d_lam, rng),
+        N_RUNS,
+    )
+    t_m1_1d = list(timer.last_times)
+    infer_m1_2d([ev_m1_2d[0]], m1_2d_anchors, m1_2d_ridge, m1_2d_lam, rng)  # warmup
+    timer(
+        lambda: infer_m1_2d(ev_m1_2d, m1_2d_anchors, m1_2d_ridge, m1_2d_lam, rng),
+        N_RUNS,
+    )
+    t_m1_2d = list(timer.last_times)
+    infer_m2_2d([ev_m2_2d[0]], m2_2d_anchors, m2_2d_ridge, m2_2d_lam, rng)  # warmup
+    timer(
+        lambda: infer_m2_2d(ev_m2_2d, m2_2d_anchors, m2_2d_ridge, m2_2d_lam, rng),
+        N_RUNS,
+    )
+    t_m2_2d = list(timer.last_times)
+    print(
+        f"  M1-1D mean={np.mean(t_m1_1d) * 1e3:.1f} ms  "
+        f"M1-2D mean={np.mean(t_m1_2d) * 1e3:.1f} ms  "
+        f"M2-2D mean={np.mean(t_m2_2d) * 1e3:.1f} ms"
+    )
+
+    # -----------------------------------------------------------------------
+    # Per-device: build the PI-GNN on that device, time it, sweep it.
+    # -----------------------------------------------------------------------
+    for device in devices:
+        rec.set_device(device)
+        is_cpu = device.type == "cpu"
+        gnn_runs = min(N_RUNS, 3) if is_cpu else N_RUNS
+
+        section(f"DEVICE {device}: Physics-Informed GNN (Model 2 - 1D)")
+        edge_index_np_m2 = make_gnn_edge_index(M2_N1, np.random.default_rng(args.seed))
+        gnn = (
+            PhysicsInformedGNN(
+                n_features=gnn_feat_dim(),
+                n_nodes=M2_N1,
+                edge_index_np=edge_index_np_m2,
+                d_model=GNN_D_MODEL,
+                n_layers=GNN_N_LAYERS,
+                dropout=GNN_DROPOUT,
+                node_embed_dim=GNN_NODE_EMBED,
+                n_aux_targets=GNN_AUX_TARGETS,
+                layer_type=GNN_LAYER_TYPE,
+                attn_dropout=GNN_ATTN_DROPOUT,
+            )
+            .to(device)
+            .eval()
+        )
+        _gp = rec.count_params(gnn)
+        rec.set_model(
+            "PI-GNN Model2 1D",
+            n_params=_gp,
+            size_mb=(None if _gp is None else _gp * 4 / 1e6),
+            d_model=GNN_D_MODEL,
+            n_layers=GNN_N_LAYERS,
+            n_nodes=M2_N1,
+        )
+
         infer_gnn_1d(
-            [sweep_events[0]], gnn_models[0], device, M2_N1, GNN_GRAPH_BATCH_SIZE, rng
-        )
-        reset_gpu_peak()
-        _b, mean_sweep, _s = timer(
-            lambda ev=sweep_events: infer_gnn_1d(
-                ev, gnn_models[0], device, M2_N1, GNN_GRAPH_BATCH_SIZE, rng
+            [ev_m2_1d[0]], gnn, device, M2_N1, GNN_GRAPH_BATCH_SIZE, rng
+        )  # warmup
+        with rec.phase("inference"):
+            infer_gnn_1d(ev_m2_1d, gnn, device, M2_N1, GNN_GRAPH_BATCH_SIZE, rng)
+        timer(
+            lambda g=gnn, dev=device: infer_gnn_1d(
+                ev_m2_1d, g, dev, M2_N1, GNN_GRAPH_BATCH_SIZE, rng
             ),
-            sweep_reps,
+            gnn_runs,
         )
-        rec.add_batch_point(
-            config=f"n_events={n}",
-            mean_s=mean_sweep,
-            items=n * M2_N1 * max(0, N_T - GNN_START_T),
-            gpu_peak_mb=gpu_peak_alloc_mb(),
+        t_gnn = list(timer.last_times)
+        print(f"  PI-GNN mean={np.mean(t_gnn) * 1e3:.1f} ms  (n={len(t_gnn)})")
+
+        # Record all four model timings (tabular reused; GNN device-specific).
+        rec.set_timing("Model1-1D Ridge+LightGBM", t_m1_1d)
+        rec.set_timing("Model1-2D Ridge+LightGBM", t_m1_2d)
+        rec.set_timing("Model2-1D PI-GNN", t_gnn)
+        rec.set_timing("Model2-2D Ridge+LightGBM+PI", t_m2_2d)
+        rec.set_throughput(
+            "Model1-1D Ridge+LightGBM",
+            items=N_EV * M1_N1 * max(0, N_T - M1_START_T),
+            mean_s=float(np.mean(t_m1_1d)),
         )
-        print(f"  n_events={n:>3}: mean={mean_sweep * 1e3:8.1f} ms")
+        rec.set_throughput(
+            "Model1-2D Ridge+LightGBM",
+            items=N_EV * M1_N2 * max(0, N_T - M1_START_T),
+            mean_s=float(np.mean(t_m1_2d)),
+        )
+        rec.set_throughput(
+            "Model2-1D PI-GNN",
+            items=N_EV * M2_N1 * max(0, N_T - GNN_START_T),
+            mean_s=float(np.mean(t_gnn)),
+        )
+        rec.set_throughput(
+            "Model2-2D Ridge+LightGBM+PI",
+            items=N_EV * M2_N2 * max(0, N_T - M2T_START_T),
+            mean_s=float(np.mean(t_m2_2d)),
+        )
+
+        # ---- batch sensitivity sweep (PI-GNN), wider grid ----
+        section(f"Batch sensitivity sweep (PI-GNN, Model 2 - 1D) — {device}")
+        sweep_reps = 2 if is_cpu else 3
+        sweep_counts = [5, 10, 20] if is_cpu else [5, 10, 20, 40, 80]
+        for n in sweep_counts:
+            sweep_events = make_events_1d(n, N_T, M2_N1, rng)
+            infer_gnn_1d(
+                [sweep_events[0]], gnn, device, M2_N1, GNN_GRAPH_BATCH_SIZE, rng
+            )  # warmup
+            reset_gpu_peak()
+            timer(
+                lambda ev=sweep_events, g=gnn, dev=device: infer_gnn_1d(
+                    ev, g, dev, M2_N1, GNN_GRAPH_BATCH_SIZE, rng
+                ),
+                sweep_reps,
+            )
+            rec.add_batch_point(
+                config=f"n_events={n}",
+                times=list(timer.last_times),
+                items=n * M2_N1 * max(0, N_T - GNN_START_T),
+                gpu_peak_mb=(gpu_peak_alloc_mb() if not is_cpu else None),
+            )
+            print(f"  n_events={n:>3}: mean={np.mean(timer.last_times) * 1e3:8.1f} ms")
+
+        del gnn
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
     rec.save(folder=os.path.dirname(os.path.abspath(__file__)))
 

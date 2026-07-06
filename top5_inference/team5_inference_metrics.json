@@ -1,0 +1,127 @@
+{
+  "solution": "5th_solution",
+  "framework": "PyTorch (Ridge+LightGBM+PI-GNN)",
+  "device": "cuda",
+  "timestamp": "2026-07-06T22:06:34",
+  "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
+  "python": "3.11.15",
+  "hardware": {
+    "torch": "2.11.0+cu128",
+    "gpu_name": "NVIDIA A100-PCIE-40GB",
+    "gpu_total_mem_mb": 42405.855232,
+    "cuda": "12.8"
+  },
+  "model": {
+    "PI-GNN Model2 1D": {
+      "n_params": 2633539,
+      "size_mb": 10.534156,
+      "d_model": 128,
+      "n_layers": 12,
+      "n_nodes": 198
+    }
+  },
+  "phases": {
+    "preprocessing": {
+      "wall_s": 0.5088887899764813,
+      "cpu_s": 0.5087701719999997,
+      "gpu_peak_alloc_mb": 0.0
+    }
+  },
+  "timing": {
+    "Model1-1D Ridge+LightGBM": {
+      "runs": 5,
+      "mean_s": 43.77325214180164,
+      "std_s": 0.04517943703637207,
+      "median_s": 43.76323631196283,
+      "min_s": 43.717631017032545,
+      "max_s": 43.85553207201883
+    },
+    "Model1-2D Ridge+LightGBM": {
+      "runs": 5,
+      "mean_s": 134.8134799744119,
+      "std_s": 0.21551193896043266,
+      "median_s": 134.7181379920221,
+      "min_s": 134.6132400429924,
+      "max_s": 135.1697249310091
+    },
+    "Model2-1D PI-GNN": {
+      "runs": 5,
+      "mean_s": 1.5885218251845798,
+      "std_s": 0.009754251092943998,
+      "median_s": 1.583664353005588,
+      "min_s": 1.5829524699947797,
+      "max_s": 1.6080099889659323
+    },
+    "Model2-2D Ridge+LightGBM+PI": {
+      "runs": 5,
+      "mean_s": 226.109282627597,
+      "std_s": 3.5486395595706117,
+      "median_s": 224.90709065797273,
+      "min_s": 222.7239937229897,
+      "max_s": 232.46556822402636
+    }
+  },
+  "throughput": {
+    "Model1-1D Ridge+LightGBM": {
+      "items": 64600,
+      "mean_s": 43.77325214180164,
+      "items_per_s": 1475.7870809034468
+    },
+    "Model1-2D Ridge+LightGBM": {
+      "items": 14120800,
+      "mean_s": 134.8134799744119,
+      "items_per_s": 104743.23489520617
+    },
+    "Model2-1D PI-GNN": {
+      "items": 752400,
+      "mean_s": 1.5885218251845798,
+      "items_per_s": 473647.88325308287
+    },
+    "Model2-2D Ridge+LightGBM+PI": {
+      "items": 16336200,
+      "mean_s": 226.109282627597,
+      "items_per_s": 72249.13462268506
+    }
+  },
+  "batch_sensitivity": [
+    {
+      "config": "n_events=5",
+      "mean_s": 1.528629796327247,
+      "items": 188100,
+      "items_per_s": 123051.37610946568,
+      "gpu_peak_alloc_mb": 50.882048
+    },
+    {
+      "config": "n_events=10",
+      "mean_s": 1.528435471681102,
+      "items": 376200,
+      "items_per_s": 246134.04161984252,
+      "gpu_peak_alloc_mb": 59.162112
+    },
+    {
+      "config": "n_events=20",
+      "mean_s": 1.5795356569966923,
+      "items": 752400,
+      "items_per_s": 476342.5229859028,
+      "gpu_peak_alloc_mb": 76.419072
+    },
+    {
+      "config": "n_events=40",
+      "mean_s": 1.8957522749939624,
+      "items": 1504800,
+      "items_per_s": 793774.5980047907,
+      "gpu_peak_alloc_mb": 111.05792
+    }
+  ],
+  "memory": {
+    "peak_cpu_rss_mb": 1740.86,
+    "gpu_max_allocated_mb": 111.05792,
+    "gpu_max_reserved_mb": 148.897792
+  },
+  "external_reference_required": {
+    "hecras_runtime_s": null,
+    "speedup_vs_hecras": null,
+    "training_cost_gpu_hours": null,
+    "_note": "Not derivable from dummy inference. Fill hecras_runtime_s from the reference HEC-RAS simulation, speedup_vs_hecras = hecras_runtime_s / inference wall time, and training_cost_gpu_hours from training logs/estimates."
+  }
+}

@@ -30,7 +30,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root: shared inference_metrics_util.py
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)  # repo root: shared inference_metrics_util.py
 from inference_metrics_util import MetricsRecorder, reset_gpu_peak, gpu_peak_alloc_mb
 
 # ─────────────────────────── topology constants ──────────────────────────────
@@ -526,144 +528,116 @@ def main():
         help="Warmup rollouts before timing (default: 2)",
     )
     parser.add_argument(
-        "--n_bench", type=int, default=50, help="Timed rollouts to average (default: 50)"
+        "--n_bench",
+        type=int,
+        default=50,
+        help="Timed rollouts to average (default: 50)",
     )
     parser.add_argument(
-        "--device", type=str, default="cuda", help="torch device (default: cuda)"
+        "--cpu_n_bench",
+        type=int,
+        default=5,
+        help="Timed rollouts on the (slower) CPU pass (default: 5)",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        help="'auto' (benchmark GPU if present AND CPU), or force 'cuda'/'cpu'",
     )
     args = parser.parse_args()
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
-
-    if device == "cuda":
-        props = torch.cuda.get_device_properties(0)
-        print(f"\nGPU: {props.name}  ({props.total_memory // 1024**2} MB)")
     print(f"PyTorch: {torch.__version__}")
     print(f"Rollout steps T={args.steps}  warmup={args.n_warmup}  bench={args.n_bench}")
 
-    # ── Metrics recorder ──────────────────────────────────────────────────
-    rec = MetricsRecorder("3rd_solution", "PyTorch", device)
-
-    all_results = []
-
-    # ── Model 1 ──────────────────────────────────────────────────────────
-    r_m1 = benchmark_model(
-        label="M1",
-        n_1d=M1_N_1D,
-        n_2d=M1_N_2D,
-        n_e1d=M1_E_1D,
-        n_e2d=M1_E_2D,
-        n_coup=M1_E_COUP,
-        T=args.steps,
-        device=device,
-        n_warmup=args.n_warmup,
-        n_bench=args.n_bench,
-        rec=rec,
-    )
-    all_results.append(r_m1)
-
-    # ── Model 2 ──────────────────────────────────────────────────────────
-    r_m2 = benchmark_model(
-        label="M2",
-        n_1d=M2_N_1D,
-        n_2d=M2_N_2D,
-        n_e1d=M2_E_1D,
-        n_e2d=M2_E_2D,
-        n_coup=M2_E_COUP,
-        T=args.steps,
-        device=device,
-        n_warmup=args.n_warmup,
-        n_bench=args.n_bench,
-        rec=rec,
-    )
-    all_results.append(r_m2)
-
-    # ── Final summary table ───────────────────────────────────────────────
-    print_summary(all_results)
-
-    # ── Per-model detailed breakdown ──────────────────────────────────────
-    print(f"\n{'═' * 80}")
-    print(f"  DETAILED BREAKDOWN (mean ± std over {args.n_bench} runs)")
-    print(f"{'═' * 80}")
-    rows = [
-        (
-            "M1 1D",
-            r_m1["gpu_1d_total_ms_mean"],
-            r_m1["gpu_1d_total_ms_std"],
-            r_m1["gpu_1d_per_step_ms"],
-        ),
-        (
-            "M1 2D",
-            r_m1["gpu_2d_total_ms_mean"],
-            r_m1["gpu_2d_total_ms_std"],
-            r_m1["gpu_2d_per_step_ms"],
-        ),
-        (
-            "M2 1D",
-            r_m2["gpu_1d_total_ms_mean"],
-            r_m2["gpu_1d_total_ms_std"],
-            r_m2["gpu_1d_per_step_ms"],
-        ),
-        (
-            "M2 2D",
-            r_m2["gpu_2d_total_ms_mean"],
-            r_m2["gpu_2d_total_ms_std"],
-            r_m2["gpu_2d_per_step_ms"],
-        ),
-    ]
-    print(
-        f"  {'Component':<10} {'Total GPU (ms)':>18} {'±std':>10} {'Per-step (ms)':>16}"
-    )
-    print(f"  {'─' * 10} {'─' * 18} {'─' * 10} {'─' * 16}")
-    for name, total, std, per_step in rows:
-        print(f"  {name:<10} {total:>18.1f} {std:>10.2f} {per_step:>16.3f}")
-    print(f"{'═' * 80}\n")
-
-    # ── Record metrics into inference_metrics.{json,txt} ──────────────────
-    steps = args.steps
-
-    # Representative full rollout (M1) timed under the "inference" phase.
-    with rec.phase("inference"):
-        rollout_timed(r_m1["model"], r_m1["graph"], steps, device)
-
-    # Per-rollout benchmark times (warmup excluded — set_timing uses bench runs).
-    rec.set_timing("m1_rollout", r_m1["wall_runs_s"])
-    rec.set_timing("m2_rollout", r_m2["wall_runs_s"])
+    # ── Metrics recorder — one JSON, both CPU and GPU sections ─────────────
+    rec = MetricsRecorder("3rd_solution", "PyTorch")
+    if args.device == "auto":
+        devices = rec.devices_to_run()  # e.g. [cuda, cpu] or [cpu]
+    else:
+        devices = [torch.device(args.device)]
 
     m1_nodes = M1_N_1D + M1_N_2D
     m2_nodes = M2_N_1D + M2_N_2D
-    rec.set_throughput("m1", items=m1_nodes * steps, mean_s=r_m1["wall_mean_s"])
-    rec.set_throughput("m2", items=m2_nodes * steps, mean_s=r_m2["wall_mean_s"])
 
-    # ── Rollout-length (AR) sensitivity sweep on M1 ───────────────────────
-    print(f"\n{'═' * 80}")
-    print("  ROLLOUT-LENGTH SENSITIVITY SWEEP (M1)")
-    print(f"{'═' * 80}")
-    sweep_model = r_m1["model"]
-    sweep_reps = 2
-    for s in [50, 100, 200, 400]:
-        sweep_graph = SyntheticGraph(
-            M1_N_1D, M1_N_2D, M1_E_1D, M1_E_2D, M1_E_COUP, device, s
+    for device in devices:
+        rec.set_device(device)
+        is_cpu = device.type == "cpu"
+        n_bench = args.cpu_n_bench if is_cpu else args.n_bench
+        n_warmup = min(args.n_warmup, 1) if is_cpu else args.n_warmup
+
+        print(f"\n{'#' * 70}\n#  DEVICE: {str(device).upper()}\n{'#' * 70}")
+        if device.type == "cuda":
+            props = torch.cuda.get_device_properties(0)
+            print(f"GPU: {props.name}  ({props.total_memory // 1024**2} MB)")
+
+        all_results = []
+        r_m1 = benchmark_model(
+            label="M1",
+            n_1d=M1_N_1D,
+            n_2d=M1_N_2D,
+            n_e1d=M1_E_1D,
+            n_e2d=M1_E_2D,
+            n_coup=M1_E_COUP,
+            T=args.steps,
+            device=device,
+            n_warmup=n_warmup,
+            n_bench=n_bench,
+            rec=rec,
         )
-        rollout_timed(sweep_model, sweep_graph, s, device)  # warmup
-        reset_gpu_peak()
-        run_times = [
-            rollout_timed(sweep_model, sweep_graph, s, device)["wall_total_s"]
-            for _ in range(sweep_reps)
-        ]
-        mean_s = float(np.mean(run_times))
-        peak = gpu_peak_alloc_mb()
-        rec.add_batch_point(
-            config=f"steps={s}",
-            mean_s=mean_s,
-            items=m1_nodes * s,
-            gpu_peak_mb=peak,
+        all_results.append(r_m1)
+        r_m2 = benchmark_model(
+            label="M2",
+            n_1d=M2_N_1D,
+            n_2d=M2_N_2D,
+            n_e1d=M2_E_1D,
+            n_e2d=M2_E_2D,
+            n_coup=M2_E_COUP,
+            T=args.steps,
+            device=device,
+            n_warmup=n_warmup,
+            n_bench=n_bench,
+            rec=rec,
         )
-        print(f"  steps={s:<5} mean={mean_s:.4f}s  gpu_peak_mb={peak}")
-    print(f"{'═' * 80}\n")
+        all_results.append(r_m2)
+
+        print_summary(all_results)
+
+        steps = args.steps
+        # Representative full rollout (M1) timed under the "inference" phase.
+        with rec.phase("inference"):
+            rollout_timed(r_m1["model"], r_m1["graph"], steps, device)
+
+        rec.set_timing("m1_rollout", r_m1["wall_runs_s"])
+        rec.set_timing("m2_rollout", r_m2["wall_runs_s"])
+        rec.set_throughput("m1", items=m1_nodes * steps, mean_s=r_m1["wall_mean_s"])
+        rec.set_throughput("m2", items=m2_nodes * steps, mean_s=r_m2["wall_mean_s"])
+
+        # ── Rollout-length (AR) sensitivity sweep on M1 (wider grid) ──────
+        print(f"\n{'═' * 80}")
+        print(f"  ROLLOUT-LENGTH SENSITIVITY SWEEP (M1) — {device}")
+        print(f"{'═' * 80}")
+        sweep_model = r_m1["model"]
+        sweep_reps = 2 if is_cpu else 3
+        sweep_steps = [25, 50, 100, 200, 400] + ([] if is_cpu else [800])
+        for s in sweep_steps:
+            sweep_graph = SyntheticGraph(
+                M1_N_1D, M1_N_2D, M1_E_1D, M1_E_2D, M1_E_COUP, device, s
+            )
+            rollout_timed(sweep_model, sweep_graph, s, device)  # warmup
+            reset_gpu_peak()
+            run_times = [
+                rollout_timed(sweep_model, sweep_graph, s, device)["wall_total_s"]
+                for _ in range(sweep_reps)
+            ]
+            rec.add_batch_point(
+                config=f"steps={s}",
+                times=run_times,
+                items=m1_nodes * s,
+                gpu_peak_mb=gpu_peak_alloc_mb(),
+            )
+            print(f"  steps={s:<5} mean={float(np.mean(run_times)):.4f}s")
+        print(f"{'═' * 80}\n")
 
     rec.save(folder=os.path.dirname(os.path.abspath(__file__)))
 

@@ -16,7 +16,9 @@ import torch.nn as nn
 import numpy as np
 from contextlib import nullcontext
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root: shared inference_metrics_util.py
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)  # repo root: shared inference_metrics_util.py
 from inference_metrics_util import MetricsRecorder, reset_gpu_peak, gpu_peak_alloc_mb
 
 # ---------------------------------------------------------------------------
@@ -46,7 +48,7 @@ np.random.seed(SEED)
 
 # You can adjust these to match your real graph sizes
 MODEL1_NUM_1D = 17  # 1-D (sewer/channel) nodes
-MODEL1_NUM_2D = 3716 # 2-D (surface) nodes
+MODEL1_NUM_2D = 3716  # 2-D (surface) nodes
 TOTAL_MODEL1_NODES = MODEL1_NUM_1D + MODEL1_NUM_2D
 
 MODEL2_NUM_1D = 198  # 1-D (sewer/channel) nodes
@@ -409,11 +411,15 @@ print("\n--- Building synthetic graph and tensors ---")
 with rec.phase("preprocessing"):
     model1_edge_index = make_edge_index(TOTAL_MODEL1_NODES, MODEL1_NUM_EDGES)
     model1_adj_dtype = torch.bfloat16 if DEVICE.type == "cuda" else torch.float32
-    model1_adj = build_gcn_csr(model1_edge_index, TOTAL_MODEL1_NODES, DEVICE, dtype=model1_adj_dtype)
+    model1_adj = build_gcn_csr(
+        model1_edge_index, TOTAL_MODEL1_NODES, DEVICE, dtype=model1_adj_dtype
+    )
 
     model2_edge_index = make_edge_index(TOTAL_MODEL2_NODES, MODEL2_NUM_EDGES)
     model2_adj_dtype = torch.bfloat16 if DEVICE.type == "cuda" else torch.float32
-    model2_adj = build_gcn_csr(model2_edge_index, TOTAL_MODEL2_NODES, DEVICE, dtype=model2_adj_dtype)
+    model2_adj = build_gcn_csr(
+        model2_edge_index, TOTAL_MODEL2_NODES, DEVICE, dtype=model2_adj_dtype
+    )
 
     # Static features: (N, STATIC_NODE_DIM); last col = 0 for 1-D, 1 for 2-D
     model1_static_node = torch.randn(TOTAL_MODEL1_NODES, STATIC_NODE_DIM, device=DEVICE)
@@ -428,19 +434,33 @@ with rec.phase("preprocessing"):
     model2_static_edge = torch.randn(MODEL2_NUM_EDGES, STATIC_EDGE_DIM, device=DEVICE)
 
     # Node input sequences: (SEQ_LENGTH, TOTAL_NODES, NODE_FEAT_DIM)
-    model1_x_node_seq = torch.randn(SEQ_LENGTH, TOTAL_MODEL1_NODES, NODE_FEAT_DIM, device=DEVICE)
-    model2_x_node_seq = torch.randn(SEQ_LENGTH, TOTAL_MODEL2_NODES, NODE_FEAT_DIM, device=DEVICE)
+    model1_x_node_seq = torch.randn(
+        SEQ_LENGTH, TOTAL_MODEL1_NODES, NODE_FEAT_DIM, device=DEVICE
+    )
+    model2_x_node_seq = torch.randn(
+        SEQ_LENGTH, TOTAL_MODEL2_NODES, NODE_FEAT_DIM, device=DEVICE
+    )
 
     # Edge dynamic sequences (for Model 2): (SEQ_LENGTH, NUM_EDGES, EDGE_FEAT_DIM)
-    model2_x_edge_seq = torch.randn(SEQ_LENGTH, MODEL2_NUM_EDGES, EDGE_FEAT_DIM, device=DEVICE)
+    model2_x_edge_seq = torch.randn(
+        SEQ_LENGTH, MODEL2_NUM_EDGES, EDGE_FEAT_DIM, device=DEVICE
+    )
 
     # Future rain for rollout: (ROLLOUT_STEPS, TOTAL_NODES, 1)
-    model1_rain_future = torch.clamp(torch.randn(ROLLOUT_STEPS, TOTAL_MODEL1_NODES, 1, device=DEVICE), 0)
-    model2_rain_future = torch.clamp(torch.randn(ROLLOUT_STEPS, TOTAL_MODEL2_NODES, 1, device=DEVICE), 0)
+    model1_rain_future = torch.clamp(
+        torch.randn(ROLLOUT_STEPS, TOTAL_MODEL1_NODES, 1, device=DEVICE), 0
+    )
+    model2_rain_future = torch.clamp(
+        torch.randn(ROLLOUT_STEPS, TOTAL_MODEL2_NODES, 1, device=DEVICE), 0
+    )
 
-print(f"  Model1 Nodes: {TOTAL_MODEL1_NODES}  (1-D={MODEL1_NUM_1D}, 2-D={MODEL1_NUM_2D})")
+print(
+    f"  Model1 Nodes: {TOTAL_MODEL1_NODES}  (1-D={MODEL1_NUM_1D}, 2-D={MODEL1_NUM_2D})"
+)
 print(f"  Model1 Edges: {MODEL1_NUM_EDGES}")
-print(f"  Model2 Nodes: {TOTAL_MODEL2_NODES}  (1-D={MODEL2_NUM_1D}, 2-D={MODEL2_NUM_2D})")
+print(
+    f"  Model2 Nodes: {TOTAL_MODEL2_NODES}  (1-D={MODEL2_NUM_1D}, 2-D={MODEL2_NUM_2D})"
+)
 print(f"  Model2 Edges: {MODEL2_NUM_EDGES}")
 print(f"  Node feature dim:  {NODE_FEAT_DIM}")
 print(f"  Edge feature dim:  {EDGE_FEAT_DIM}")
@@ -678,11 +698,15 @@ _M1_ROLL_LABEL = f"Model 1 (TGCN)     full rollout  [{ROLLOUT_STEPS} steps]"
 _M2_ROLL_LABEL = f"Model 2 (EdgeAware) full rollout [{ROLLOUT_STEPS} steps]"
 m1_roll_mean, m1_roll_std = bench(
     _M1_ROLL_LABEL,
-    lambda: rollout_model1(model1, model1_x_node_seq, model1_rain_future, ROLLOUT_STEPS),
+    lambda: rollout_model1(
+        model1, model1_x_node_seq, model1_rain_future, ROLLOUT_STEPS
+    ),
 )
 m2_roll_mean, m2_roll_std = bench(
     _M2_ROLL_LABEL,
-    lambda: rollout_model2(model2, model2_x_node_seq, model2_x_edge_seq, model2_rain_future, ROLLOUT_STEPS),
+    lambda: rollout_model2(
+        model2, model2_x_node_seq, model2_x_edge_seq, model2_rain_future, ROLLOUT_STEPS
+    ),
 )
 
 print("\n--- Single decode + step (per-timestep cost) ---")
@@ -769,7 +793,9 @@ for label, v1, v2 in rows:
     print(f"  {label:<48s}{v1}{v2}")
 
 print("=" * 80)
-print(f"\nDevice: {DEVICE}  |  Model 1 Nodes: {TOTAL_MODEL1_NODES}  |  Model 1 Edges: {MODEL1_NUM_EDGES}")
+print(
+    f"\nDevice: {DEVICE}  |  Model 1 Nodes: {TOTAL_MODEL1_NODES}  |  Model 1 Edges: {MODEL1_NUM_EDGES}"
+)
 print(f"  Model 2 Nodes: {TOTAL_MODEL2_NODES}  |  Model 2 Edges: {MODEL2_NUM_EDGES}")
 print(
     "All times are wall-clock with CUDA synchronisation (mean over "
@@ -817,9 +843,13 @@ for steps in _sweep_horizons:
     label = f"steps={steps}"
     bench(
         f"Model 1 (TGCN)  horizon sweep  [{steps} steps]",
-        lambda s=steps: rollout_model1(model1, model1_x_node_seq, model1_rain_future, s),
+        lambda s=steps: rollout_model1(
+            model1, model1_x_node_seq, model1_rain_future, s
+        ),
     )
-    sweep_times = _BENCH_TIMES_S.get(f"Model 1 (TGCN)  horizon sweep  [{steps} steps]", [])
+    sweep_times = _BENCH_TIMES_S.get(
+        f"Model 1 (TGCN)  horizon sweep  [{steps} steps]", []
+    )
     mean_s = float(np.mean(sweep_times)) if sweep_times else 0.0
     rec.add_batch_point(
         config=label,
