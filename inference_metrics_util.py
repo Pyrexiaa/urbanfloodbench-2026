@@ -196,12 +196,21 @@ class MetricsRecorder:
 
         Lets a single recorder capture separate GPU and CPU sections in one
         JSON. Returns the device so callers can do `dev = rec.set_device(dev)`.
+
+        Memory for the device being left is snapshotted before switching, and
+        the GPU peak counters are reset so the next device measures its own
+        peak. This is what makes per-device memory accurate in a CPU/GPU loop.
         """
+        # Finalize memory for the section we're leaving.
+        if self._cur_device is not None:
+            self._snapshot_memory(self.data["devices"][self._cur_device])
         key = str(device)
         self.data["device"] = key
         self._cur_device = key
         if key not in self.data["devices"]:
             self.data["devices"][key] = self._new_section()
+        # Reset GPU peak counters so the new device's peak starts clean.
+        reset_gpu_peak()
         return device
 
     def devices_to_run(self):
@@ -296,8 +305,10 @@ class MetricsRecorder:
         self.data[key] = value
 
     # ---- finalize + write ----
-    def _finalize_memory(self):
-        mem = self._section()["memory"]
+    @staticmethod
+    def _snapshot_memory(section):
+        """Write current peak CPU/GPU memory into `section["memory"]`."""
+        mem = section["memory"]
         mem["peak_cpu_rss_mb"] = _peak_cpu_rss_mb()
         if _cuda_available():
             t = _torch()
@@ -307,6 +318,10 @@ class MetricsRecorder:
             gp = gpu_peak_alloc_mb()
             if gp is not None:
                 mem["gpu_peak_alloc_mb"] = gp
+
+    def _finalize_memory(self):
+        # Snapshot memory for the current (last-used) section.
+        self._snapshot_memory(self._section())
 
     @staticmethod
     def _pretty_section(sec, L, indent=""):

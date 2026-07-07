@@ -24,6 +24,14 @@ from inference_metrics_util import MetricsRecorder, reset_gpu_peak, gpu_peak_all
 # ---------------------------------------------------------------------------
 os.environ["KERAS_BACKEND"] = "jax"
 
+# --- GPU memory behaviour (must be set BEFORE jax is imported) ---
+# Don't grab the whole GPU up front, cap the fraction we may use, and use the
+# async allocator which is far less prone to fragmentation-driven OOMs.
+# setdefault() so anything exported in the run script/SLURM job wins.
+os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", ".9")
+os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
+
 import time
 import numpy as np
 import jax
@@ -620,6 +628,19 @@ def run_benchmark(model_name, topo, rec=None, batch_size=BATCH_SIZE, n_timed=N_T
 # 6.  Main
 # ---------------------------------------------------------------------------
 
+def _gpu_mem_limit_mb(dev):
+    """Total usable memory (MB) for a JAX GPU device, or None if unknown."""
+    try:
+        st = dev.memory_stats()
+        if st:
+            for k in ("bytes_limit", "bytes_reservable_limit"):
+                if st.get(k):
+                    return st[k] / 1e6
+    except Exception:
+        pass
+    return None
+
+
 if __name__ == "__main__":
     np.random.seed(42)
 
@@ -676,9 +697,32 @@ if __name__ == "__main__":
             print("=" * 70)
             _sweep_topo = MODEL_TOPOLOGIES["model_1"]
             _sweep_nodes = _sweep_topo["num_1d_nodes"] + _sweep_topo["num_2d_nodes"]
-            _sweep_batches = [1, 2, 4] if _is_cpu else [1, 2, 4, 8, 16]
             _sweep_reps = 3 if _is_cpu else 5
+            _sweep_batches = sorted([1, 2, 4] if _is_cpu else [1, 2, 4, 8, 16])
+
+            # Memory-adaptive guard (GPU only). Peak memory grows ~linearly with
+            # batch size, so we predict each config's peak from the measured peak
+            # of the previous (smaller) batch and skip anything that would exceed
+            # a safe fraction of device memory. This matters because a real GPU
+            # OOM here is a cgroup SIGKILL, NOT a catchable exception — so we must
+            # avoid even ATTEMPTING an over-large batch.
+            _mem_limit_mb = None if _is_cpu else _gpu_mem_limit_mb(_dev)
+            _safe_frac = 0.60  # leaves headroom for XLA autotuner scratch
+            _prev_b = _prev_peak_mb = None
+            if _mem_limit_mb:
+                print(f"  GPU memory limit ≈ {_mem_limit_mb/1e3:.1f} GB "
+                      f"(sweeping up to {_safe_frac:.0%} = {_safe_frac*_mem_limit_mb/1e3:.1f} GB)")
+
             for b in _sweep_batches:
+                # Proactive skip: extrapolate peak from the last successful batch.
+                if _mem_limit_mb and _prev_peak_mb:
+                    _pred_mb = _prev_peak_mb * (b / _prev_b)
+                    if _pred_mb > _safe_frac * _mem_limit_mb:
+                        print(f"  [batch={b}] skipped — predicted peak "
+                              f"~{_pred_mb/1e3:.1f} GB exceeds "
+                              f"{_safe_frac:.0%} of {_mem_limit_mb/1e3:.1f} GB; "
+                              f"stopping sweep (larger batches would also OOM)")
+                        break
                 reset_gpu_peak()
                 try:
                     br = run_benchmark(
@@ -688,14 +732,20 @@ if __name__ == "__main__":
                         batch_size=b,
                         n_timed=_sweep_reps,
                     )
+                    _peak_mb = None if _is_cpu else gpu_peak_alloc_mb()
                     rec.add_batch_point(
                         config=f"batch={b}",
                         times=br["times_total"],
                         items=_sweep_nodes * FORECAST_STEPS * b,
-                        gpu_peak_mb=(None if _is_cpu else gpu_peak_alloc_mb()),
+                        gpu_peak_mb=_peak_mb,
                     )
+                    if _peak_mb:
+                        _prev_b, _prev_peak_mb = b, _peak_mb
                 except Exception as e:
+                    # Catchable errors (incl. XLA RESOURCE_EXHAUSTED): stop
+                    # escalating, since larger batches will only need more memory.
                     print(f"  [batch={b}] skipped due to error: {e}")
+                    break
 
         # ---- Summary table (this device) ----
         print("\n\n" + "=" * 70)

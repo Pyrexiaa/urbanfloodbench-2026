@@ -43,6 +43,14 @@ if ! conda activate "$env_name" 2>/dev/null; then
   exit 1
 fi
 
+# --- GPU memory behaviour (JAX/XLA) ---
+# Don't preallocate the whole GPU, cap the usable fraction, and use the async
+# allocator to avoid fragmentation-driven OOMs. These are also set as defaults
+# inside inference.py; exporting here lets you override without editing code.
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export XLA_PYTHON_CLIENT_MEM_FRACTION=.9
+export TF_GPU_ALLOCATOR=cuda_malloc_async
+
 # Run inside the solution folder so inference_metrics.json is written there
 # and any relative paths resolve correctly.
 (

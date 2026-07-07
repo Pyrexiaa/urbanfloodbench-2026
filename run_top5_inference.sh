@@ -29,6 +29,15 @@ fi
 cd "$MAIN_DIR" || { echo "!!! Cannot cd to $MAIN_DIR"; exit 1; }
 mkdir -p logs
 
+# --- GPU memory behaviour for the JAX/Keras solution (1st) ---
+# Don't preallocate the whole GPU, cap the usable fraction, and use the async
+# allocator to avoid fragmentation-driven OOMs. Harmless for the PyTorch
+# solutions (they ignore these). Also set as defaults inside 1st_solution's
+# inference.py; exporting here lets you override without editing code.
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export XLA_PYTHON_CLIENT_MEM_FRACTION=.9
+export TF_GPU_ALLOCATOR=cuda_malloc_async
+
 # Solutions in rank order.
 SOLUTIONS=(1st_solution 2nd_solution 3rd_solution 4th_solution 5th_solution)
 
