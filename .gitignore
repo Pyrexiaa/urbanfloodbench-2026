@@ -1,1 +1,4 @@
 __pycache__/
+.DS_Store
+visualizations/kaggle_submissions/*.csv
+visualizations/data
