@@ -641,6 +641,50 @@ def _gpu_mem_limit_mb(dev):
     return None
 
 
+def _host_mem_limit_mb():
+    """Usable host RAM (MB): the cgroup limit if one is set (e.g. SLURM
+    --mem), otherwise total physical RAM. None if it can't be determined."""
+    for p in (
+        "/sys/fs/cgroup/memory.max",  # cgroup v2
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",  # cgroup v1
+    ):
+        try:
+            with open(p) as f:
+                v = f.read().strip()
+            if v and v != "max":
+                b = int(v)
+                if 0 < b < (1 << 62):  # ignore the "unlimited" sentinel
+                    return b / 1e6
+        except Exception:
+            pass
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e6
+    except Exception:
+        return None
+
+
+def _proc_peak_rss_mb():
+    """Peak resident set size (MB) of this process so far, or None if unknown.
+
+    Uses the high-water mark (VmHWM) so the prediction is based on the transient
+    peak that actually triggers an OOM, not the lower steady-state RSS measured
+    after a run completes and memory is released.
+    """
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) / 1e3  # kB -> MB
+    except Exception:
+        pass
+    try:
+        import resource
+
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e3  # kB -> MB
+    except Exception:
+        return None
+
+
 if __name__ == "__main__":
     np.random.seed(42)
 
@@ -700,17 +744,24 @@ if __name__ == "__main__":
             _sweep_reps = 3 if _is_cpu else 5
             _sweep_batches = sorted([1, 2, 4] if _is_cpu else [1, 2, 4, 8, 16])
 
-            # Memory-adaptive guard (GPU only). Peak memory grows ~linearly with
-            # batch size, so we predict each config's peak from the measured peak
-            # of the previous (smaller) batch and skip anything that would exceed
-            # a safe fraction of device memory. This matters because a real GPU
-            # OOM here is a cgroup SIGKILL, NOT a catchable exception — so we must
-            # avoid even ATTEMPTING an over-large batch.
-            _mem_limit_mb = None if _is_cpu else _gpu_mem_limit_mb(_dev)
-            _safe_frac = 0.60  # leaves headroom for XLA autotuner scratch
+            # Memory-adaptive guard (both GPU and CPU). Peak memory grows
+            # ~linearly with batch size, so we predict each config's footprint
+            # from the measured peak of the previous (smaller) batch and skip
+            # anything that would exceed a safe fraction of the available
+            # memory. This matters because a real OOM here — GPU device memory
+            # OR host RAM (SLURM cgroup) — is a SIGKILL, NOT a catchable
+            # exception, so we must avoid even ATTEMPTING an over-large batch.
+            if _is_cpu:
+                _mem_limit_mb = _host_mem_limit_mb()
+                _mem_kind = "host RAM"
+                _safe_frac = 0.50  # host transient peak can exceed steady RSS
+            else:
+                _mem_limit_mb = _gpu_mem_limit_mb(_dev)
+                _mem_kind = "GPU memory"
+                _safe_frac = 0.60  # leaves headroom for XLA autotuner scratch
             _prev_b = _prev_peak_mb = None
             if _mem_limit_mb:
-                print(f"  GPU memory limit ≈ {_mem_limit_mb/1e3:.1f} GB "
+                print(f"  {_mem_kind} limit ≈ {_mem_limit_mb/1e3:.1f} GB "
                       f"(sweeping up to {_safe_frac:.0%} = {_safe_frac*_mem_limit_mb/1e3:.1f} GB)")
 
             for b in _sweep_batches:
@@ -720,7 +771,7 @@ if __name__ == "__main__":
                     if _pred_mb > _safe_frac * _mem_limit_mb:
                         print(f"  [batch={b}] skipped — predicted peak "
                               f"~{_pred_mb/1e3:.1f} GB exceeds "
-                              f"{_safe_frac:.0%} of {_mem_limit_mb/1e3:.1f} GB; "
+                              f"{_safe_frac:.0%} of {_mem_limit_mb/1e3:.1f} GB {_mem_kind}; "
                               f"stopping sweep (larger batches would also OOM)")
                         break
                 reset_gpu_peak()
@@ -732,12 +783,14 @@ if __name__ == "__main__":
                         batch_size=b,
                         n_timed=_sweep_reps,
                     )
-                    _peak_mb = None if _is_cpu else gpu_peak_alloc_mb()
+                    # For prediction: GPU uses device peak, CPU uses process RSS.
+                    _gpu_peak = None if _is_cpu else gpu_peak_alloc_mb()
+                    _peak_mb = _proc_peak_rss_mb() if _is_cpu else _gpu_peak
                     rec.add_batch_point(
                         config=f"batch={b}",
                         times=br["times_total"],
                         items=_sweep_nodes * FORECAST_STEPS * b,
-                        gpu_peak_mb=_peak_mb,
+                        gpu_peak_mb=_gpu_peak,
                     )
                     if _peak_mb:
                         _prev_b, _prev_peak_mb = b, _peak_mb
