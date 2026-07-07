@@ -1,8 +1,8 @@
 {
   "solution": "3rd_solution",
   "framework": "PyTorch",
-  "device": "cuda",
-  "timestamp": "2026-07-06T22:04:14",
+  "device": "cpu",
+  "timestamp": "2026-07-07T17:37:11",
   "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
   "python": "3.11.15",
   "hardware": {
@@ -11,97 +11,233 @@
     "gpu_total_mem_mb": 42405.855232,
     "cuda": "12.8"
   },
-  "model": {
-    "Model 1": {
-      "n_params": 1438725,
-      "size_mb": 5.7549
+  "model": {},
+  "phases": {},
+  "timing": {},
+  "throughput": {},
+  "batch_sensitivity": [],
+  "memory": {},
+  "devices": {
+    "cuda": {
+      "model": {
+        "Model 1": {
+          "n_params": 1438725,
+          "size_mb": 5.7549
+        },
+        "Model 2": {
+          "n_params": 1438725,
+          "size_mb": 5.7549
+        }
+      },
+      "phases": {
+        "preprocessing_m1": {
+          "wall_s": 0.09933830401860178,
+          "cpu_s": 0.09939664000000015,
+          "gpu_peak_alloc_mb": 15.13984
+        },
+        "preprocessing_m2": {
+          "wall_s": 0.0014604420284740627,
+          "cpu_s": 0.0014563699999996516,
+          "gpu_peak_alloc_mb": 37.311488
+        },
+        "inference": {
+          "wall_s": 1.0565627359901555,
+          "cpu_s": 1.0570460890000106,
+          "gpu_peak_alloc_mb": 72.996352
+        }
+      },
+      "timing": {
+        "m1_rollout": {
+          "runs": 50,
+          "mean_s": 1.0524028445989826,
+          "std_s": 0.001566300263470887,
+          "median_s": 1.0521361279825214,
+          "min_s": 1.049930605047848,
+          "max_s": 1.0581536210374907
+        },
+        "m2_rollout": {
+          "runs": 50,
+          "mean_s": 1.0505881561420392,
+          "std_s": 0.0008197555325867692,
+          "median_s": 1.0504945144930389,
+          "min_s": 1.049132154963445,
+          "max_s": 1.0531769989756867
+        }
+      },
+      "throughput": {
+        "m1": {
+          "items": 1119900,
+          "mean_s": 1.0524028445989826,
+          "items_per_s": 1064136.2342827353
+        },
+        "m2": {
+          "items": 1307700,
+          "mean_s": 1.0505881561420392,
+          "items_per_s": 1244731.33678008
+        }
+      },
+      "batch_sensitivity": [
+        {
+          "config": "steps=25",
+          "mean_s": 0.08785957732470706,
+          "std_s": 8.065273911008157e-05,
+          "items": 93325,
+          "items_per_s": 1062206.339271291,
+          "gpu_peak_alloc_mb": 74.281472
+        },
+        {
+          "config": "steps=50",
+          "mean_s": 0.17578660231083632,
+          "std_s": 0.0002799514442496027,
+          "items": 186650,
+          "items_per_s": 1061798.7807168283,
+          "gpu_peak_alloc_mb": 74.652672
+        },
+        {
+          "config": "steps=100",
+          "mean_s": 0.35069308866513893,
+          "std_s": 0.00018199042030990576,
+          "items": 373300,
+          "items_per_s": 1064463.5211401253,
+          "gpu_peak_alloc_mb": 74.59328
+        },
+        {
+          "config": "steps=200",
+          "mean_s": 0.7020397173473611,
+          "std_s": 0.001373192441186334,
+          "items": 746600,
+          "items_per_s": 1063472.594999338,
+          "gpu_peak_alloc_mb": 76.882432
+        },
+        {
+          "config": "steps=400",
+          "mean_s": 1.4045418629733224,
+          "std_s": 0.0013815060741140524,
+          "items": 1493200,
+          "items_per_s": 1063122.4596175398,
+          "gpu_peak_alloc_mb": 79.412736
+        },
+        {
+          "config": "steps=800",
+          "mean_s": 2.8025973433589875,
+          "std_s": 0.0013348416502083403,
+          "items": 2986400,
+          "items_per_s": 1065582.9696965031,
+          "gpu_peak_alloc_mb": 85.80096
+        }
+      ],
+      "memory": {
+        "peak_cpu_rss_mb": 934.204,
+        "gpu_max_allocated_mb": 85.80096,
+        "gpu_max_reserved_mb": 123.731968
+      }
     },
-    "Model 2": {
-      "n_params": 1438725,
-      "size_mb": 5.7549
+    "cpu": {
+      "model": {
+        "Model 1": {
+          "n_params": 1438725,
+          "size_mb": 5.7549
+        },
+        "Model 2": {
+          "n_params": 1438725,
+          "size_mb": 5.7549
+        }
+      },
+      "phases": {
+        "preprocessing_m1": {
+          "wall_s": 0.0653108520200476,
+          "cpu_s": 0.4554285999999763,
+          "gpu_peak_alloc_mb": 45.49376
+        },
+        "preprocessing_m2": {
+          "wall_s": 0.012790923996362835,
+          "cpu_s": 0.0551672999999937,
+          "gpu_peak_alloc_mb": 40.121344
+        },
+        "inference": {
+          "wall_s": 18.628296984010376,
+          "cpu_s": 294.9560515579997,
+          "gpu_peak_alloc_mb": 28.130304
+        }
+      },
+      "timing": {
+        "m1_rollout": {
+          "runs": 5,
+          "mean_s": 37.02708237339975,
+          "std_s": 13.983010268004483,
+          "median_s": 38.72076474502683,
+          "min_s": 19.059960801969282,
+          "max_s": 53.410309034981765
+        },
+        "m2_rollout": {
+          "runs": 5,
+          "mean_s": 53.017738765385005,
+          "std_s": 16.11458735454126,
+          "median_s": 47.068017828976735,
+          "min_s": 35.17116284696385,
+          "max_s": 77.85203492897563
+        }
+      },
+      "throughput": {
+        "m1": {
+          "items": 1119900,
+          "mean_s": 37.02708237339975,
+          "items_per_s": 30245.429243016348
+        },
+        "m2": {
+          "items": 1307700,
+          "mean_s": 53.017738765385005,
+          "items_per_s": 24665.329575575757
+        }
+      },
+      "batch_sensitivity": [
+        {
+          "config": "steps=25",
+          "mean_s": 1.896028274029959,
+          "std_s": 0.0015786460135132074,
+          "items": 93325,
+          "items_per_s": 49221.312402499214,
+          "gpu_peak_alloc_mb": 9.568256
+        },
+        {
+          "config": "steps=50",
+          "mean_s": 2.817666939488845,
+          "std_s": 0.0053896734898444265,
+          "items": 186650,
+          "items_per_s": 66242.74763782418,
+          "gpu_peak_alloc_mb": 9.568256
+        },
+        {
+          "config": "steps=100",
+          "mean_s": 10.417818254500162,
+          "std_s": 1.7207139745005406,
+          "items": 373300,
+          "items_per_s": 35832.838592547574,
+          "gpu_peak_alloc_mb": 9.568256
+        },
+        {
+          "config": "steps=200",
+          "mean_s": 11.058616472495487,
+          "std_s": 0.00056521050282754,
+          "items": 746600,
+          "items_per_s": 67512.96618857443,
+          "gpu_peak_alloc_mb": 9.568256
+        },
+        {
+          "config": "steps=400",
+          "mean_s": 22.54805939400103,
+          "std_s": 0.009997071989346296,
+          "items": 1493200,
+          "items_per_s": 66222.99391304911,
+          "gpu_peak_alloc_mb": 9.568256
+        }
+      ],
+      "memory": {
+        "peak_cpu_rss_mb": 1019.84,
+        "gpu_max_allocated_mb": 9.568256,
+        "gpu_max_reserved_mb": 123.731968
+      }
     }
-  },
-  "phases": {
-    "preprocessing_m1": {
-      "wall_s": 0.12040334899211302,
-      "cpu_s": 0.09838981399999991,
-      "gpu_peak_alloc_mb": 15.13984
-    },
-    "preprocessing_m2": {
-      "wall_s": 0.0013932510046288371,
-      "cpu_s": 0.0013890000000031932,
-      "gpu_peak_alloc_mb": 37.311488
-    },
-    "inference": {
-      "wall_s": 1.030133594002109,
-      "cpu_s": 1.030344937999999,
-      "gpu_peak_alloc_mb": 72.996352
-    }
-  },
-  "timing": {
-    "m1_rollout": {
-      "runs": 50,
-      "mean_s": 1.0499812193820253,
-      "std_s": 0.029153680082834012,
-      "median_s": 1.027363882982172,
-      "min_s": 1.0219321819604374,
-      "max_s": 1.0860913439537399
-    },
-    "m2_rollout": {
-      "runs": 50,
-      "mean_s": 1.0216828757198528,
-      "std_s": 0.0009491003327243537,
-      "median_s": 1.0216661885206122,
-      "min_s": 1.0191847819951363,
-      "max_s": 1.024606994993519
-    }
-  },
-  "throughput": {
-    "m1": {
-      "items": 1119900,
-      "mean_s": 1.0499812193820253,
-      "items_per_s": 1066590.5059322165
-    },
-    "m2": {
-      "items": 1307700,
-      "mean_s": 1.0216828757198528,
-      "items_per_s": 1279947.066822106
-    }
-  },
-  "batch_sensitivity": [
-    {
-      "config": "steps=50",
-      "mean_s": 0.17009315150789917,
-      "items": 186650,
-      "items_per_s": 1097339.889027407,
-      "gpu_peak_alloc_mb": 74.652672
-    },
-    {
-      "config": "steps=100",
-      "mean_s": 0.34054813999682665,
-      "items": 373300,
-      "items_per_s": 1096173.950629942,
-      "gpu_peak_alloc_mb": 74.59328
-    },
-    {
-      "config": "steps=200",
-      "mean_s": 0.6818192804930732,
-      "items": 746600,
-      "items_per_s": 1095011.568842816,
-      "gpu_peak_alloc_mb": 76.882432
-    },
-    {
-      "config": "steps=400",
-      "mean_s": 1.3651523650041781,
-      "items": 1493200,
-      "items_per_s": 1093797.3212941913,
-      "gpu_peak_alloc_mb": 79.412736
-    }
-  ],
-  "memory": {
-    "peak_cpu_rss_mb": 935.088,
-    "gpu_max_allocated_mb": 79.412736,
-    "gpu_max_reserved_mb": 121.634816
   },
   "external_reference_required": {
     "hecras_runtime_s": null,
