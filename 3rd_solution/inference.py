@@ -33,7 +33,7 @@ import numpy as np
 sys.path.insert(
     0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )  # repo root: shared inference_metrics_util.py
-from inference_metrics_util import MetricsRecorder, reset_gpu_peak, gpu_peak_alloc_mb
+from top5_inference.inference_metrics_util import MetricsRecorder, reset_gpu_peak, gpu_peak_alloc_mb
 
 # ─────────────────────────── topology constants ──────────────────────────────
 # M1: 17 1D nodes, 3 716 2D nodes  (from pipeline docs)

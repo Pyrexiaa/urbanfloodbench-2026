@@ -57,6 +57,7 @@ from .shp_1d2d_data_retrieval import (
 )
 from .boundary_1d2d_condition import Boundary1d2dCondition
 from .dataset_normalizer import DatasetNormalizer
+from .unit_converter import UnitConverter
 
 
 class FloodEvent1D2DDataset(Dataset):
@@ -142,6 +143,8 @@ class FloodEvent1D2DDataset(Dataset):
         network_name: str = "Base",
         model_name: str = "Model1",
         node_1d_mapping: Dict[int, int] = None,
+        source_units: str = "SI",
+        target_units: Optional[str] = None,
     ):
         assert mode in ["train", "test"], (
             f'Invalid mode: {mode}. Must be "train" or "test".'
@@ -200,6 +203,25 @@ class FloodEvent1D2DDataset(Dataset):
         self._event_peak_idx = None
         self._event_num_timesteps = None
         self._event_base_timestep_interval = None
+
+        # Optional unit conversion (off unless target_units is set and differs
+        # from the model's native source_units). Applied before normalization so
+        # that feature statistics are computed in the common target system.
+        self.source_units = source_units
+        self.target_units = target_units
+        self.unit_converter = None
+        if target_units is not None:
+            converter = UnitConverter(
+                source_system=source_units,
+                target_system=target_units,
+                log_func=self.log_func,
+            )
+            if not converter.is_noop:
+                self.unit_converter = converter
+                self.log_func(
+                    f"Unit conversion enabled: {converter.source_system} -> "
+                    f"{converter.target_system} for model '{model_name}'."
+                )
 
         # Helper classes
         self.normalizer = DatasetNormalizer(mode, root_dir, features_stats_file)
@@ -292,9 +314,6 @@ class FloodEvent1D2DDataset(Dataset):
             )
         )
 
-        # Physics-informed Loss Features (2D)
-        node_rainfall_per_ts = self._get_physics_info(dynamic_nodes)
-
         # --- 1D Processing ---
         edge_index_1d = self._get_1d_edge_index(self.raw_paths[1], self.raw_paths[0])
         edge_index_1d_2d = self._get_1d_2d_edge_index(self.raw_paths[2])
@@ -302,6 +321,44 @@ class FloodEvent1D2DDataset(Dataset):
         static_edges_1d = self._get_static_1d_edge_features()
         dynamic_nodes_1d = self._get_dynamic_1d_node_features()
         dynamic_edges_1d = self._get_dynamic_1d_edge_features()
+
+        # Optional unit conversion (before normalization). No-op unless a
+        # differing target unit system was requested at construction time.
+        if self.unit_converter is not None:
+            static_nodes = self.unit_converter.convert_feature_vector(
+                self.STATIC_NODE_FEATURES, static_nodes
+            )
+            dynamic_nodes = self.unit_converter.convert_feature_vector(
+                self.DYNAMIC_NODE_FEATURES, dynamic_nodes
+            )
+            static_edges = self.unit_converter.convert_feature_vector(
+                self.STATIC_EDGE_FEATURES, static_edges
+            )
+            dynamic_edges = self.unit_converter.convert_feature_vector(
+                self.DYNAMIC_EDGE_FEATURES, dynamic_edges
+            )
+            static_nodes_1d = self.unit_converter.convert_feature_vector(
+                self.STATIC_1D_NODE_FEATURES, static_nodes_1d
+            )
+            dynamic_nodes_1d = self.unit_converter.convert_feature_vector(
+                self.DYNAMIC_1D_NODE_FEATURES, dynamic_nodes_1d
+            )
+            static_edges_1d = self.unit_converter.convert_feature_vector(
+                self.STATIC_1D_EDGE_FEATURES, static_edges_1d
+            )
+            dynamic_edges_1d = self.unit_converter.convert_feature_vector(
+                self.DYNAMIC_1D_EDGE_FEATURES, dynamic_edges_1d
+            )
+            self.log_func(
+                f"Applied unit conversion "
+                f"({self.unit_converter.source_system} -> "
+                f"{self.unit_converter.target_system})."
+            )
+
+        # Physics-informed Loss Features (2D). Computed after unit conversion so
+        # the rainfall used by the mass-conservation loss matches the (possibly
+        # converted) dynamic node features.
+        node_rainfall_per_ts = self._get_physics_info(dynamic_nodes)
 
         if self.is_normalized:
             # 2D Normalization
@@ -523,6 +580,8 @@ class FloodEvent1D2DDataset(Dataset):
             "time_from_peak": event_stats["time_from_peak"],
             "inflow_boundary_nodes": event_stats["inflow_boundary_nodes"],
             "outflow_boundary_nodes": event_stats["outflow_boundary_nodes"],
+            # Backward-compatible: older stats files predate unit conversion.
+            "converted_units": event_stats.get("converted_units", None),
         }
         return event_start_idx, total_rollout_timesteps, processed_event_info
 
@@ -537,6 +596,13 @@ class FloodEvent1D2DDataset(Dataset):
             "time_from_peak": self.time_from_peak,
             "inflow_boundary_nodes": self.inflow_boundary_nodes,
             "outflow_boundary_nodes": self.outflow_boundary_nodes,
+            # Records the target unit system the features were converted to
+            # (None when no conversion was applied).
+            "converted_units": (
+                self.unit_converter.target_system
+                if self.unit_converter is not None
+                else None
+            ),
         }
         save_to_yaml_file(self.processed_paths[0], event_stats)
 
@@ -594,6 +660,16 @@ class FloodEvent1D2DDataset(Dataset):
         if processed_event_info["time_from_peak"] != self.time_from_peak:
             self.log_func(
                 f"Previous time_from_peak {processed_event_info['time_from_peak']} differs from current {self.time_from_peak}. Reprocessing dataset."
+            )
+            return True
+        current_converted_units = (
+            self.unit_converter.target_system
+            if self.unit_converter is not None
+            else None
+        )
+        if processed_event_info.get("converted_units", None) != current_converted_units:
+            self.log_func(
+                f"Previous converted_units {processed_event_info.get('converted_units', None)} differs from current {current_converted_units}. Reprocessing dataset."
             )
             return True
         # if set(processed_event_info['inflow_boundary_nodes']) != set(self.inflow_boundary_nodes):
